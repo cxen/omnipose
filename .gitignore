@@ -138,3 +138,4 @@ dmypy.json
 # IDE-specific settings and configurations
 .idea/
 .vscode/
+.DS_Store
