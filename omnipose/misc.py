@@ -1042,12 +1042,13 @@ def get_slice_tuple(start, stop, shape, axis=None):
 
     # Create a list of slices for each axis
     slices = [slice(None)] * ndim 
-    
-    if axis is None:
-        axis = list(range(ndim))
+
 
     # Check if start and stop are iterable
     if isinstance(start, Iterable) and isinstance(stop, Iterable):
+        if axis is None:
+            axis = list(range(ndim))
+    
         # Check that start and stop are the same length
         if len(start) != len(stop):
             raise ValueError("start and stop must be the same length")
@@ -1065,6 +1066,8 @@ def get_slice_tuple(start, stop, shape, axis=None):
         for a, s, e in zip(axis, start, stop):
             slices[a] = slice(s, e, None)
     else:
+        if axis is None:
+            axis = 0
         # If start and stop are not iterable, use them as integers
         slices[axis] = slice(start, stop, None)
 
@@ -1106,4 +1109,15 @@ def explore_object(obj):
     dropdown.observe(on_change)
     display(widgets.HBox([dropdown, output]))
 
+from scipy.ndimage import uniform_filter
+def find_highest_density_box(label_matrix, box_size):
+    # Compute the cell density for each box in the image
+    cell_density = uniform_filter((label_matrix > 0).astype(float), size=box_size, mode='constant')
 
+    # Find the coordinates of the box with the highest cell density
+    max_density_coords = np.unravel_index(np.argmax(cell_density), cell_density.shape)
+
+    # Compute the coordinates of the box
+    box_coords = tuple(slice(max_coord - box_size // 2, max_coord + box_size // 2) for max_coord in max_density_coords)
+
+    return box_coords

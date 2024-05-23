@@ -1,19 +1,17 @@
 from . import core, utils
 
-from numba import njit
-
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 
 import types
 
 import numpy as np
+import torch
 from matplotlib.backend_bases import GraphicsContextBase, RendererBase
 from matplotlib.collections import LineCollection
-from matplotlib.patches import Rectangle
-from matplotlib.transforms import Bbox
-from matplotlib.path import Path
-
+# from matplotlib.patches import Rectangle
+# from matplotlib.transforms import Bbox
+# from matplotlib.path import Path
 
 class GC(GraphicsContextBase):
     def __init__(self):
@@ -22,7 +20,6 @@ class GC(GraphicsContextBase):
 
 def custom_new_gc(self):
     return GC()
-
 
 def plot_edges(shape,affinity_graph,neighbors,coords,
                figsize=1,fig=None,ax=None, extent=None, slc=None, pic=None, 
@@ -197,14 +194,26 @@ def colorize_GPU(im, colors=None, color_weights=None, offset=0,channel_axis=-1):
     if color_weights is not None:
         colors *= color_weights.unsqueeze(-1)
 
-    rgb_shape = im.shape[1:]+(colors.shape[1],)
-    if channel_axis == 0:
-        rgb_shape = tuple(rgb_shape[::-1])
-    rgb = torch.zeros(rgb_shape, device=device)
+    # rgb_shape = im.shape[1:]+(colors.shape[1],)
+    # if channel_axis == 0:
+    #     rgb_shape = tuple(rgb_shape[::-1])
+    # rgb = torch.ones(rgb_shape, device=device)
 
     # Use broadcasting to multiply im and colors and sum along the 0th dimension
-    rgb = (im.unsqueeze(-1) * colors.view(colors.shape[0], 1, 1, colors.shape[1])).mean(dim=0)
+    # rgb = (im.unsqueeze(-1) * colors.view(colors.shape[0], 1, 1, colors.shape[1])).mean(dim=0)
+    
+    im = im.unsqueeze(-1)  # Add an extra dimension to `im`
+    # colors = colors.view(colors.shape[0], 1, 1, colors.shape[1])  # Reshape `colors`
+
+    # print(im.shape,colors.shape)
+    # Compute the mean and assign the result to `rgb`
+    # rgb = (im*colors).mean(dim=0)
+    
+    # Perform the multiplication and mean computation using `einsum` - way faster 
+    rgb = torch.einsum('ijkl,il->jkl', im.double(), colors.double()) / N
+
     return rgb
+
     
     
 import ncolor
@@ -226,8 +235,8 @@ from mpl_toolkits.axes_grid1 import ImageGrid
 import matplotlib.pyplot as plt
 
 def imshow(imgs, figsize=2, ax=None, hold=False, titles=None, title_size=None, spacing=0.05, 
-           textcolor=[0.5]*3, dpi=300, **kwargs):
-    text_scale = 10
+           textcolor=[0.5]*3, dpi=300, text_scale = 1, **kwargs):
+
     
     if isinstance(imgs, list):
         if titles is None:
@@ -360,8 +369,6 @@ def imshow(imgs, figsize=2, ax=None, hold=False, titles=None, title_size=None, s
 #     return im
 
 
-        
-import torch
 def rgb_flow(dP, transparency=True, mask=None, norm=True, device=torch.device('cpu')):
     """Meant for stacks of dP, unsqueeze if using on a single plane."""
     if isinstance(dP,torch.Tensor):
@@ -446,25 +453,42 @@ def color_from_RGB(im,rgb,m,bd=None, mode='inner',connectivity=2):
     return overlay
     
     
-
+def split_list(lst, N):
+    return [lst[i:i + N] for i in range(0, len(lst), N)]
+        
 def image_grid(images, column_titles=None, row_titles=None,
-            xticks=[], yticks=[], 
-            outline=False, outline_color=[0.5]*3, 
-            padding=0.05, 
-            fontsize=10, fontcolor=[0.5]*3,
-            fig_scale=6, dpi=300,
-            order='ij',
-            **kwargs):
-    """Display a grid of images with uniform spacing."""
+               plot_labels=None, 
+                xticks=[], yticks=[], 
+                outline=False, outline_color=[0.5]*3, 
+                padding=0.05, 
+                fontsize=10, fontcolor=[0.5]*3,
+                fig_scale=6, dpi=300,
+                order='ij',
+                lpad = 0.05,
+                lpos='top_middle',
+                **kwargs):
+    """Display a grid of images with uniform spacing.
+    Accepts a neested list of images, with each sublist having cosnsitent YXC diemnsions. 
+    
+    """
+    
+    label_positions = {'top_middle': {'coords': (0.5, 1-lpad), 'va': 'top', 'ha': 'center'},
+                        'bottom_left': {'coords': (lpad, lpad), 'va': 'bottom', 'ha': 'left'},
+                        'bottom_middle': {'coords': (0.5, lpad), 'va': 'bottom', 'ha': 'center'},
+                        'top_left': {'coords': (lpad, 1-lpad), 'va': 'top', 'ha': 'left'},
+                        # Add more positions as needed
+                    }
 
     # get the dimensions of the grid
-    grid_dims = [len(images), len(images[0])]
+    nrow = len(images)
+    ncol = [len(i) for i in images]
+    grid_dims = [nrow,max(ncol)]
     ij = order=='ij'
     ji = order=='ji'
 
     n,m = grid_dims 
-    # Get the shapes of the images
-    image_shapes = np.stack([i[0].shape for i in images])
+    # Get the shapes of the images in eahc row (we assume each row cas consistent xy dims and the images are YXC)
+    image_shapes = np.stack([i[0].shape[:2] for i in images])
     
     # Padding between images
     p = padding
@@ -531,7 +555,15 @@ def image_grid(images, column_titles=None, row_titles=None,
         
         # Display the image
         j,k = np.unravel_index(i,grid_dims)
-        ax.imshow(images[j][k],**kwargs)
+        if k < ncol[j]: # not all nows may have the same number of images 
+            ax.imshow(images[j][k],**kwargs)
+            if plot_labels is not None and plot_labels[j][k] is not None:
+                coords = label_positions[lpos]['coords']
+                va = label_positions[lpos]['va']
+                ha = label_positions[lpos]['ha']
+                ax.text(coords[0],coords[1], plot_labels[j][k], fontsize=fontsize, color=fontcolor, 
+                        va=va, ha=ha, transform=ax.transAxes)
+
         
         # Set the column titles
         if column_titles is not None:
@@ -749,3 +781,12 @@ def plot_color_swatches(colors,figsize=0.5,dpi=100):
     
     # Display the swatches
     imshow(swatches, figsize=figsize,dpi=dpi)
+    
+from matplotlib.colors import LinearSegmentedColormap
+def truncate_colormap(cmap, minval=0.0, maxval=1.0, n=100):
+    cmap=mpl.colormaps[cmap] if isinstance(cmap, str) else cmap
+
+    new_cmap = LinearSegmentedColormap.from_list(
+        'trunc({n},{a:.2f},{b:.2f})'.format(n=cmap.name, a=minval, b=maxval),
+        cmap(np.linspace(minval, maxval, n)))
+    return new_cmap
