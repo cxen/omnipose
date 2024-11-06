@@ -12,7 +12,32 @@
 # documentation root, use os.path.abspath to make it absolute, like shown here.
 #
 import sys, os, re
-sys.path.insert(0, os.path.abspath('.'))
+# sys.path.insert(0, os.path.abspath('.'))
+
+sys.path.insert(0, os.path.abspath('..'))
+
+
+# Add all the modules that can't be installed in the RTD environment
+# autodoc_mock_imports = ["networkit"]
+
+from dependencies import install_deps, gui_deps, distributed_deps
+autodoc_mock_imports = install_deps + gui_deps + distributed_deps
+autodoc_mock_imports += ["cv2", "tqdm", "skimage", "numba", "torch", 
+                         "sklearn", #this one in particular is a problem because it registers different than the package name 
+                         "torchvision", # may remove from imports 
+                         ]
+# Function to strip version specifiers from package names
+def strip_versions(dep_list):
+    # Updated function to correctly process and strip version specifiers from package names
+    stripped_list = []
+    for dep in dep_list:
+        # Split the dependency string on version specifiers and take the first part (the package name)
+        dep_name = re.split(r'>=|==|<|<=|>', dep)[0]
+        stripped_list.append(dep_name)
+    return stripped_list
+
+# Apply the corrected function to autodoc_mock_imports
+autodoc_mock_imports = strip_versions(autodoc_mock_imports)
 
 # pygments
 sys.path.append(os.path.abspath("./_pygments"))
@@ -150,6 +175,20 @@ master_doc = 'index'
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ['_templates']
 
+
+# Set the canonical URL for the latest version
+html_baseurl = 'https://omnipose.readthedocs.io/'
+
+# Configure HTML context for the canonical URL
+html_context = {
+    'canonical_url': html_baseurl
+}
+
+# Add the SEO template to your HTML templates
+html_extra_path = ['_templates/seo.html']
+
+
+
 # List of patterns, relative to source directory, that match files and
 # directories to ignore when looking for source files.
 # This pattern also affects html_static_path and html_extra_path.
@@ -197,7 +236,37 @@ html_css_files = [
 ]
 
 
-from omnipose.utils import sinebow
+# from omnipose.plot import sinebow
+# for simplicity, just copy the function here
+import numpy as np
+def sinebow(N,bg_color=[0,0,0,0], offset=0):
+    """ Generate a color dictionary for use in visualizing N-colored labels. Background color 
+    defaults to transparent black. 
+    
+    Parameters
+    ----------
+    N: int
+        number of distinct colors to generate (excluding background)
+        
+    bg_color: ndarray, list, or tuple of length 4
+        RGBA values specifying the background color at the front of the  dictionary.
+    
+    Returns
+    --------------
+    Dictionary with entries {int:RGBA array} to map integer labels to RGBA colors. 
+    
+    """
+    colordict = {0:bg_color}
+    for j in range(N): 
+        k = j+offset
+        angle = k*2*np.pi / (N) 
+        r = ((np.cos(angle)+1)/2)
+        g = ((np.cos(angle+2*np.pi/3)+1)/2)
+        b = ((np.cos(angle+4*np.pi/3)+1)/2)
+        colordict.update({j+1:[r,g,b,1]})
+    return colordict
+
+
 from matplotlib.colors import rgb2hex
 N = 42
 c = sinebow(N)
@@ -446,5 +515,8 @@ html_sidebars = {
         "sidebar/navigation.html",
         "sidebar/scroll-end.html",
         "sidebar/variant-selector.html",
+        # "sidebar/ethical-ads.html",
+        "ethicalads.html",
     ]
 }
+

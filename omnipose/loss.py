@@ -35,7 +35,7 @@ class AffinityLoss(torch.nn.Module):
 
     def forward(self,flow_pred,dist_pred,flow_gt,dist_gt): # y is GT, x is predicted 
     
-        torch.autograd.set_detect_anomaly(True)
+        # torch.autograd.set_detect_anomaly(True) # this is a problem on MPS
 
         mask_threshold = 0
         # foreground must be union of x and y foregrounds             
@@ -121,7 +121,10 @@ class SineSquaredLoss(torch.nn.Module):
         magY = torch_norm(y,dim=1)
         denom = torch.multiply(magX,magY)
         dot = torch.sum(torch.stack([x[:,k]*y[:,k] for k in range(x.shape[1])],dim=1),dim=1)
-        cos = torch.where(denom>eps,dot/(denom+eps),1)
+        
+        # need to handle zero denominator, so if either or both are zero, cos is 1 so loss is minimum (0)
+        # so that handles transitions from boundary to background just fine 
+        cos = torch.where(denom>eps,dot/(denom+eps),1) 
         return torch.mean((1-cos**2)*w)        
         # return torch.where(mask,(1-cos**2)*w,torch.nan).nanmean() # possible alternative 
 

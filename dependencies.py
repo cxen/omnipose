@@ -1,11 +1,24 @@
-install_deps = ['numpy>=1.22.4', 'scipy', 'numba', 
-                'edt','scikit-image','ncolor>=1.2.1',
-                'scikit-learn','torch>=1.10',
+install_deps = ['numpy>=1.22.4,<=1.26.4', # will need to wait a bit for cythonized packages to catch up to numpy 2.0
+                'scipy', 
+                'numba', 
+                'edt',
+                'scikit-image',
+                'ncolor>=1.2.1',
+                'scikit-learn',
+                'torch>=1.10',
+                'torchvision',
                 'mahotas>=1.4.13',
-                'mgen','matplotlib',
+                'mgen',
+                'matplotlib',
                 'networkit',
-                'torchvf','tqdm', 'natsort','aicsimageio',
-                'numexpr'
+                'torchvf',
+                'tqdm', 
+                'natsort', 
+                'aicsimageio',
+                'numexpr',
+                'torch_optimizer',
+                'tifffile', # might be dependency of aicsimageio
+                'fastremap' # not sure how I missed this one 
                 ]
 
 gui_deps = [
@@ -14,16 +27,9 @@ gui_deps = [
         'PyQt6',
         'google-cloud-storage',
         'omnipose-theme',
-        'superqt','darkdetect'
+        'superqt',
+        'darkdetect'
         ]
-
-doc_deps = ['sphinx-autobuild',
-            'sphinx_automodapi',
-            'sphinx_copybutton',
-            'sphinx-argparse',
-            'sphinx_design',
-            'furo',
-            'myst_nb']
 
 distributed_deps = [
         'dask',

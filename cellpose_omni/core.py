@@ -12,31 +12,33 @@ from omnipose.plot import rgb_flow
 # print('need to add acb_mse to deps')
 
 import omnipose
+from omnipose.gpu import use_gpu
 
 # from multiprocessing import Pool, cpu_count
 # from functools import partial
 # from focal_loss.focal_loss import FocalLoss
 
-try:
-    from mxnet import gluon, nd
-    import mxnet as mx
-    from . import resnet_style
-    MXNET_ENABLED = True 
-    mx_GPU = mx.gpu()
-    mx_CPU = mx.cpu()
-except:
-    MXNET_ENABLED = False
+# try:
+#     from mxnet import gluon, nd
+#     import mxnet as mx
+#     from . import resnet_style
+#     MXNET_ENABLED = True 
+#     mx_GPU = mx.gpu()
+#     mx_CPU = mx.cpu()
+# except:
+#     MXNET_ENABLED = False
 
-try:
-    import torch
-    from torch.cuda.amp import autocast, GradScaler
-    from torch import nn
-    from torch.utils import mkldnn as mkldnn_utils
-    TORCH_ENABLED = True
-    from .resnet_torch import torch_GPU, torch_CPU, CPnet, ARM, empty_cache
-except Exception as e:
-    TORCH_ENABLED = False
-    print('core.py torch import error',e)
+MXNET_ENABLED = False
+
+
+import torch
+from torch.amp import autocast, GradScaler
+from torch import nn
+from torch.utils import mkldnn as mkldnn_utils
+from .resnet_torch import torch_GPU, torch_CPU, CPnet, ARM, empty_cache
+# torch.serialization.add_safe_globals(CPnet)
+
+
 
 core_logger = logging.getLogger(__name__)
 tqdm_out = utils.TqdmToLogger(core_logger, level=logging.INFO)
@@ -59,35 +61,18 @@ def parse_model_string(pretrained_model):
     concatenation = ostrs[2]=='on'
     return residual_on, style_on, concatenation
 
-def use_gpu(gpu_number=0, use_torch=True):
-    """ check if gpu works """
-    if use_torch:
-        return _use_gpu_torch(gpu_number)
-    else:
-        raise ValueError('cellpose only runs with pytorch now')
-
-def _use_gpu_torch(gpu_number=0):
-    try:
-        # device = torch.device('cuda:' + str(gpu_number))
-        device = torch.device(f'mps:{gpu_number}') if ARM else torch.device(f'cuda:{gpu_number}')
-        _ = torch.zeros([1, 2, 3]).to(device)
-        core_logger.info('** TORCH GPU version installed and working. **')
-        return True
-    except:# Exception as e:
-        core_logger.info('TORCH GPU version not installed/working.')#, e)
-        return False
-
-def assign_device(use_torch=True, gpu=False, device=0):
-    if gpu and use_gpu(use_torch=True):
-        # device = torch.device(f'cuda:{device}')
-        device = torch_GPU
-        gpu = True
-        core_logger.info('>>>> using GPU')
-    else:
+def assign_device(gpu=True, gpu_number=None):
+    device, gpu_available = use_gpu(gpu_number)
+    if gpu and gpu_available:
+        core_logger.info('Using GPU.')
+    elif gpu and not gpu_available:
+        core_logger.info('No GPU available or pytorch not configured, using CPU.')
         device = torch_CPU
-        core_logger.info('>>>> using CPU')
-        gpu=False
-    return device, gpu
+    else:
+        core_logger.info('Using CPU.')
+        device = torch_CPU
+    return device, gpu_available
+    
 
 def check_mkl(use_torch=True):
     #core_logger.info('Running test snippet to check if MKL-DNN working')
@@ -118,24 +103,21 @@ class UnetModel():
                  diam_mean=30., net_avg=True, device=None,
                  residual_on=False, style_on=False, concatenation=True,
                  nclasses=3, use_torch=True, nchan=2, dim=2, 
+                 nsample=4,
                  checkpoint=False, dropout=False, kernel_size=2):
+        self.nsample = nsample
         self.unet = True
-        if use_torch:
-            if not TORCH_ENABLED:
-                use_torch = False
+                
         self.torch = use_torch
         self.mkldnn = None
-        if device is None:
-            sdevice, gpu = assign_device(torch, gpu)
-        self.device = device if device is not None else sdevice
+        
+        # assign GPU
         if device is not None:
-            if use_torch:
-                # device_gpu = self.device.type=='cuda'
-                device_gpu = self.device.type=='mps' if ARM else self.device.type=='cuda'
-                
-            else:
-                device_gpu = self.device.device_type=='gpu'
-        self.gpu = gpu if device is None else device_gpu
+            self.device = device
+            self.gpu = self.device.type=='mps' if ARM else self.device.type=='cuda'
+        else:
+            self.device, self.gpu = assign_device(gpu)
+        
         if use_torch and not self.gpu:
             self.mkldnn = check_mkl(self.torch)
         self.pretrained_model = pretrained_model
@@ -164,7 +146,9 @@ class UnetModel():
         # print('torch is ffff', torch) # duplicated in unetmodel class
         
         if self.torch:
-            self.nbase = [nchan, 32, 64, 128, 256]
+            # self.nbase = [nchan, 32, 64, 128, 256]
+            self.nbase = [nchan]+[32*(2**i) for i in range(self.nsample)]
+            
             self.net = CPnet(self.nbase, 
                               self.nclasses, 
                               sz=3,
@@ -176,6 +160,7 @@ class UnetModel():
                               checkpoint=self.checkpoint,
                               dropout=self.dropout,
                               kernel_size=self.kernel_size).to(self.device)
+            core_logger.info(f'u-net config: {self.nbase, self.nclasses, self.dim}')
         else:
             self.net = resnet_style.CPnet(self.nbase, nout=self.nclasses,
                                         residual_on=residual_on, 
@@ -189,7 +174,7 @@ class UnetModel():
 
     def eval(self, x, batch_size=8, channels=None, channels_last=False, invert=False, normalize=True,
              rescale=None, do_3D=False, anisotropy=None, net_avg=True, augment=False,
-             tile=True, cell_threshold=None, boundary_threshold=None, min_size=15):
+             tile=False, cell_threshold=None, boundary_threshold=None, min_size=15):
         """ segment list of images x
 
             Parameters
@@ -262,7 +247,8 @@ class UnetModel():
             styles: list of 1D arrays of length 64, or single 1D array (if do_3D=True)
                 style vector summarizing each image, also used to estimate size of objects in image
 
-        """        
+        """
+        print('Broken branch',channel_axis)
         x = [transforms.convert_image(xi, channels, channel_axis, z_axis, do_3D, 
                                     normalize, invert, nchan=self.nchan) for xi in x]
         nimg = len(x)
@@ -309,7 +295,7 @@ class UnetModel():
                 imgs = transforms.resize_image(img, rsz=rescale[i])
                 print('This branch seems to have a bug',img.shape, imgs.shape)
                 y, style = self._run_nets(img, net_avg=net_avg, augment=augment, 
-                                          tile=tile)
+                                          normalize=normalize, tile=tile)
                 
                 maski = utils.get_masks_unet(y, cell_threshold, boundary_threshold)
                 maski = utils.fill_holes_and_remove_small_masks(maski, min_size=min_size)
@@ -337,13 +323,18 @@ class UnetModel():
         return masks, flows, styles
 
     def _to_device(self, x):
-        if self.torch:
+        if isinstance(x, torch.Tensor):
+            if self.device!=x.device:
+                return x.to(self.device)
+            else:
+                return x
+        elif self.torch:
             # X = torch.tensor(x,device=self.device).float()
-            X = torch.tensor(x,device=self.device,dtype=torch.float32) #specify float32 for mps                        
+            return torch.tensor(x,device=self.device,dtype=torch.float32) #specify float32 for mps                        
         else:
             #if x.dtype != 'bool':
-            X = nd.array(x.astype(np.float32), ctx=self.device)
-        return X
+            return np.array(x.astype(np.float32), ctx=self.device)
+
     
 
     def _from_device(self, X):
@@ -355,11 +346,12 @@ class UnetModel():
             x = X.asnumpy()
         return x
 
-    def network(self, x, return_conv=False):
+    def network(self, x, return_conv=False, to_numpy=True):
         """ convert imgs to torch/mxnet and run network model and return numpy """
         X = self._to_device(x)
         if self.torch:
             self.net.eval()
+                    
             if self.mkldnn:
                 self.net = mkldnn_utils.to_mkldnn(self.net)
             with torch.no_grad():
@@ -367,18 +359,23 @@ class UnetModel():
         else:
             y, style = self.net(X)
         del X 
+        
         if self.mkldnn:
             self.net.to(torch_CPU)
-        y = self._from_device(y)
-        style = self._from_device(style)
+            
+        if to_numpy:
+            y = self._from_device(y)
+            style = self._from_device(style)
+            
         if return_conv: # conv is not even defined anywhere, why is this here?
+            print('cc')
             conv = self._from_device(conv)
             y = np.concatenate((y, conv), axis=1)
         
         return y, style
                 
-    def _run_nets(self, img, net_avg=True, augment=False, tile=True, tile_overlap=0.1, bsize=224, 
-                  return_conv=False, progress=None):
+    def _run_nets(self, img, net_avg=True, augment=False, tile=False, normalize=True,
+                  tile_overlap=0.1, bsize=224, return_conv=False, progress=None):
         """ run network (if more than one, loop over networks and average results
 
         Parameters
@@ -415,7 +412,8 @@ class UnetModel():
 
         """
         if isinstance(self.pretrained_model, str) or not net_avg:  
-            y, style = self._run_net(img, augment=augment, tile=tile, tile_overlap=tile_overlap,
+            y, style = self._run_net(img, augment=augment, tile=tile, normalize=normalize,
+                                     tile_overlap=tile_overlap,
                                      bsize=bsize, return_conv=return_conv)
         else:  
             for j in range(len(self.pretrained_model)):
@@ -429,6 +427,7 @@ class UnetModel():
                 if not self.torch:
                     net.collect_params().grad_req = 'null'
                 y0, style = self._run_net(img, augment=augment, tile=tile, 
+                                          normalize=normalize,
                                           tile_overlap=tile_overlap, bsize=bsize,
                                           return_conv=return_conv)
 
@@ -442,7 +441,9 @@ class UnetModel():
             
         return y, style
 
-    def _run_net(self, imgs, augment=False, tile=True, tile_overlap=0.1, bsize=224,
+    def _run_net(self, imgs, 
+                 augment=False, tile=True, normalize=True,
+                 tile_overlap=0.1, bsize=224,
                  return_conv=False):
         """ run network on image or stack of images
 
@@ -512,6 +513,7 @@ class UnetModel():
         if tile or augment or (imgs.ndim==4 and self.dim==2): ## need to work out the tiling in ND... <<<<<
             y, style = self._run_tiled(imgs, augment=augment, bsize=bsize, 
                                       tile_overlap=tile_overlap, 
+                                      normalize=normalize,
                                       return_conv=return_conv)
         else:
 
@@ -520,7 +522,6 @@ class UnetModel():
             y, style = self.network(imgs, return_conv=return_conv)
             y, style = y[0], style[0]
         style /= (style**2).sum()**0.5
-
 
         # slice out padding
         y = y[slc]
@@ -532,7 +533,9 @@ class UnetModel():
 
         return y, style
     
-    def _run_tiled(self, imgi, augment=False, bsize=224, tile_overlap=0.1, return_conv=False):
+    def _run_tiled(self, imgi, augment=False, normalize=True, 
+                   bsize=224, tile_overlap=0.1,
+                   return_conv=False):
         """ run network in tiles of size [bsize x bsize]
 
         Image is split into overlapping tiles of size [bsize x bsize].
@@ -578,7 +581,8 @@ class UnetModel():
                 ziterator = trange(Lz, file=tqdm_out)
                 for i in ziterator:
                     yfi, stylei = self._run_tiled(imgi[i], augment=augment, 
-                                                  bsize=bsize, tile_overlap=tile_overlap)
+                                                  bsize=bsize, normalize=normalize, 
+                                                  tile_overlap=tile_overlap)
                     yf[i] = yfi
                     styles.append(stylei)
             else:
@@ -611,6 +615,7 @@ class UnetModel():
         else:
             IMG, subs, shape, inds = transforms.make_tiles_ND(imgi, bsize=bsize,
                                                               augment=augment,
+                                                              normalize=normalize,
                                                               tile_overlap=tile_overlap) #<<<
             # IMG now always returned in the form (ny*nx, nchan, ly, lx) 
             # for either tiling or augmenting
@@ -640,7 +645,7 @@ class UnetModel():
 
     def _run_3D(self, imgs, rsz=1.0, anisotropy=None, net_avg=True, 
                 augment=False, tile=True, tile_overlap=0.1, 
-                bsize=224, progress=None):
+                normalize=True, bsize=224, progress=None):
         """ run network on stack of images
 
         (faster if augment is False)
@@ -705,6 +710,7 @@ class UnetModel():
             # per image
             core_logger.info('running %s: %d planes of size (%d, %d)'%(sstr[p], shape[0], shape[1], shape[2]))
             y, style = self._run_nets(xsl, net_avg=net_avg, augment=augment, tile=tile, 
+                                      normalize=normalize,
                                       bsize=bsize, tile_overlap=tile_overlap)
             y = transforms.resize_image(y, shape[1], shape[2])    
             yf[p] = y.transpose(ipm[p])
@@ -818,7 +824,7 @@ class UnetModel():
             self.optimizer.zero_grad()
             # https://towardsdatascience.com/optimize-pytorch-performance-for-speed-and-memory-efficiency-2022-84f453916ea6
             # self.optimizer.zero_grad(set_to_none=True) does nothing 
-            self.net.train()
+            self.net.train() # must put into train mode
             
             if self.autocast:
                 with autocast(): 
@@ -910,10 +916,14 @@ class UnetModel():
                 self.criterion17 = omnipose.loss.SineSquaredLoss()
                 # self.criterion0 = ivp_loss.IVPLoss(dx=0.2, # consider increasing t0 np.sqrt(2)/5 for diagonals 
                 self.criterion0 = omnipose.loss.EulerLoss(self.device,self.dim)
+                
+                
                 self.criterionA = omnipose.loss.AffinityLoss(self.device,self.dim)
-                self.criterionB  = nn.BCELoss(reduction='mean')
-                self.criterionD = omnipose.loss.DerivativeLoss()
-                self.criterionC = omnipose.loss.CorrelationLoss()
+                # self.criterionB  = nn.BCELoss(reduction='mean')
+                # self.criterionD = omnipose.loss.DerivativeLoss()
+                # self.criterionC = omnipose.loss.CorrelationLoss()
+                
+                
                 # self.criterionS =  omnipose.loss.MSSSIMLoss()
                 # Select weighting for each class if not wanting to use the defualt 1:1 weighting
                 # zero_weighting = 1.0
@@ -921,7 +931,7 @@ class UnetModel():
 
                 # self.criterionACB = ACBLoss(zero_weighting, nonzero_weighting)
                 # self.ivp_loss =  ivp_loss.IVPLoss(dx=0.25,n_steps=8,device=self)
-                # self.criterion17 = nn.SoftmaxCrossEntropyLoss(axis=1)
+                # self.criterion18 = nn.SoftmaxCrossEntropyLoss(axis=1)
                 # self.criterion17 = FocalLoss()
                 
             else:
@@ -1022,7 +1032,7 @@ class UnetModel():
             core_logger.warning('WARNING: no save_path given, model not saving')
 
         ksave = 0
-        rsc = 1.0
+        rsc = 1.0 # initialize, redefiled below
 
         # cannot train with mkldnn
         self.net.mkldnn = False
@@ -1128,9 +1138,6 @@ class UnetModel():
 
                     tic = time.time()
 
-                    # print('\t Batch number',batch_idx)
-                    # print('yoyoyo',batch_data.shape,batch_inds)
-
                     nbatch = len(batch_data)
                     dt = tic-toc
                     datatime += [dt]
@@ -1179,10 +1186,11 @@ class UnetModel():
                                                              omni=self.omni, 
                                                              dim=self.dim,
                                                              affinity_field=affinity_field
-                                                            )[:-2]
+                                                            )
                     
-                    X = out[:-1]
-                    slices = out[-1]
+                    X = out[:-4]
+                    slices = out[-4]
+                    affinity_graph = out[-1]
                     masks,bd,T,mu = [torch.stack([x[(Ellipsis,)+slc] for slc in slices]) for x in X]
                     lbl = omnipose.core.batch_labels(masks,bd,T,mu,tyx,
                                                      dim=self.dim,
@@ -1301,7 +1309,7 @@ class UnetModel():
                         
                         file_name = os.path.join(file_path, file_name)
                         ksave += 1
-                        core_logger.info(f'saving network parameters to {file_name}')
+                        core_logger.info(f'saving network parameters to file://{file_name}')
 
                         # self.net.save_model(file_name)
                         # whether or not we are using dataparallel 

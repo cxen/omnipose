@@ -10,10 +10,9 @@ from csv import reader, writer
 import re
 
 try:
-    from omnipose.utils import format_labels
     from omnipose.logger import LOGGER_FORMAT
-    import ncolor
     OMNI_INSTALLED = True
+    import ncolor
 except Exception as e:
     print(f"Error when importing omnipose or ncolor: {e}")
     OMNI_INSTALLED = False
@@ -59,8 +58,7 @@ def logger_setup(verbose=False):
     logger = logging.getLogger(__name__)
     
     # logger.setLevel(logging.DEBUG) # does not fix CLI
-
-    logger.info(f'WRITING LOG OUTPUT TO {log_file}')
+    # logger.info(f'WRITING LOG OUTPUT TO {log_file}')
     #logger.handlers[1].stream = sys.stdout
 
     return logger, log_file
@@ -87,13 +85,15 @@ def load_links(filename):
     """
     if filename is not None and os.path.exists(filename):
         links = set()
-        file = open(filename,"r")
-        lines = reader(file)
-        for l in lines: 
-            links.add(tuple([int(num) for num in l]))
+        with open(filename, "r") as file:
+            lines = reader(file)
+            for l in lines:
+                # Check if the line is not empty before processing
+                if l:
+                    links.add(tuple(int(num) for num in l))
         return links
     else:
-        return []
+        return set()
 
 def write_links(savedir,basename,links):
     """
@@ -146,16 +146,28 @@ def imread(filename):
 
 
 def imwrite(filename, arr, **kwargs):
-    ext = os.path.splitext(filename)[-1]
-    if ext== '.tif' or ext=='tiff':
+    ext = os.path.splitext(filename)[-1].lower()
+    if ext in ['.tif', '.tiff']:
         tifffile.imwrite(filename, arr, **kwargs)
-    elif ext=='.npy':    
+    elif ext == '.npy':
         np.save(filename, arr, **kwargs)
     else:
-        if len(arr.shape)>2:
+        # Handle PNG compression via kwargs
+        compression = kwargs.pop('compression', 9)
+        quality = kwargs.pop('quality', 95)
+        
+        if ext == '.png':
+            compression_params = [cv2.IMWRITE_PNG_COMPRESSION, compression]
+        elif ext == '.jpg' or ext == '.jpeg' or ext == '.jp2':
+            compression_params = [cv2.IMWRITE_JPEG_QUALITY, quality]
+        else:
+            compression_params = []
+
+        if len(arr.shape) > 2:# and ext != '.png':
             arr = cv2.cvtColor(arr, cv2.COLOR_BGR2RGB)
-        cv2.imwrite(filename, arr, **kwargs)
-#         skimage.io.imwrite(filename, arr.astype()) #cv2 doesn't handle transparency
+            
+        cv2.imwrite(filename, arr, compression_params + list(kwargs.items()))
+        
 
 def imsave(filename, arr):
     io_logger.warning('WARNING: imsave is deprecated, use io.imwrite instead')
@@ -572,7 +584,7 @@ def save_masks(images, masks, flows, file_names, png=True, tif=False,
 
     # format_labels will also automatically use lowest bit depth possible
     if OMNI_INSTALLED:
-        masks = format_labels(masks) 
+        masks = ncolor.format_labels(masks) 
 
     # save masks
     with warnings.catch_warnings():
@@ -622,7 +634,7 @@ def save_masks(images, masks, flows, file_names, png=True, tif=False,
         imgout = plot.outline_view(img0,masks,color=outline_col, 
                                    channel_axis=channel_axis, 
                                    channels=channels)
-        imwrite(os.path.join(outlinedir, basename + '_outlines' + suffix + '.png'),  imgout)
+        imwrite(os.path.join(outlinedir, basename + '_outlines' + suffix + '.jpeg'),  imgout)
     
     # ncolor labels (ready for color map application)
     if masks.ndim < 3 and OMNI_INSTALLED and save_ncolor:
@@ -686,3 +698,65 @@ def save_server(parent=None, filename=None):
             )
         )
 
+from collections import defaultdict
+def delete_old_models(directory, keep_last=10):
+    # Dictionary to store lists of files by prefix
+    files_by_prefix = defaultdict(list)
+
+    # Create a search pattern for the model files
+    pattern = os.path.join(directory, "*_epoch_*")
+    
+    # Get a list of all model files matching the pattern
+    model_files = glob.glob(pattern)
+    
+    # Organize files by prefix
+    for file in model_files:
+        # Extract prefix (everything before '_epoch_')
+        base_name = os.path.basename(file)
+        prefix = base_name.split('_epoch_')[0]
+        files_by_prefix[prefix].append(file)
+    
+    # Process each prefix
+    for prefix, files in files_by_prefix.items():
+        # Sort files by epoch number
+        files.sort(key=lambda x: int(x.split('_epoch_')[-1]))
+        
+        # Determine how many files to delete
+        num_files_to_delete = len(files) - keep_last
+        
+        # If there are files to delete, proceed
+        if num_files_to_delete > 0:
+            files_to_delete = files[:num_files_to_delete]
+
+            for file in files_to_delete:
+                os.remove(file)
+                print(f"Deleted {file}")
+        else:
+            print(f"No files to delete for prefix '{prefix}', fewer than or equal to the last {keep_last} files are already present.")
+        
+    print("Deletion process completed.")
+    
+    
+import platform
+
+def adjust_file_path(file_path):
+    """
+    Adjust the file path based on the operating system.
+    On macOS, replace '/home/user' with '/Volumes'.
+    On Linux, replace '/Volumes' with the home directory path.
+
+    Args:
+        file_path (str): The original file path.
+
+    Returns:
+        str: The adjusted file path.
+    """
+    system = platform.system()
+    if system == 'Darwin':  # macOS
+        adjusted_path = re.sub(r'^/home/\w+', '/Volumes', file_path)
+    elif system == 'Linux':  # Linux
+        home_dir = os.path.expanduser('~')
+        adjusted_path = re.sub(r'^/Volumes', home_dir, file_path)
+    else:
+        raise ValueError(f"Unsupported operating system: {system}")
+    return adjusted_path

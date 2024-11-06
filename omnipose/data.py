@@ -23,8 +23,6 @@ def torch_zoom(img, scale_factor=1.0, dim=2, size=None, mode='bilinear'):
 
     return img
 
-
-
 class eval_loader(torch.utils.data.DataLoader):
     def __init__(self, dataset, model, postprocess_fn, **kwargs):
         super().__init__(dataset, **kwargs)
@@ -119,7 +117,6 @@ class eval_set(torch.utils.data.Dataset):
 #             # if the channel axis is 0, then the default order is correct: B,C,Y,X
 #             # otherwise, we need to move it to position 1
 #             imgs = np.moveaxis(imgs,channel_axis,1)
-        
 
 
     def __getitem__(self, inds, no_pad=False, no_rescale=False):
@@ -129,7 +126,7 @@ class eval_set(torch.utils.data.Dataset):
         
         if self.stack:
             # data is in memory, index it
-            imgs = torch.tensor(self.data[inds].astype(float), device=self.device)
+            imgs = torch.tensor(self.data[inds].astype(np.float32), device=self.device)
             
         elif self.list:   
             
@@ -146,14 +143,14 @@ class eval_set(torch.utils.data.Dataset):
                 if self.files:
                     file = self.data[index]
                     # img = AICSImage(file).data.squeeze().astype(float)
-                    img = AICSImage(file).get_image_data("YX", out_of_memory=True).squeeze().astype(float)
+                    img = AICSImage(file).get_image_data("YX", out_of_memory=True).squeeze()
                     # print('here',img.shape, AICSImage(file).shape,  AICSImage(file).dims, AICSImage(file).get_image_data("CYX", out_of_memory=True).shape)
                     
                     # img = tifffile.imread()
                 else:
-                    img = self.data[index].astype(float)
+                    img = self.data[index]
                     
-                imgs[i] = torch.tensor(img,device=self.device)
+                imgs[i] = torch.tensor(img.astype(np.float32),device=self.device)
                 
             
             # I would like to be able to handle different shapes... perhaps by padding
@@ -255,12 +252,14 @@ class eval_set(torch.utils.data.Dataset):
             
     def _run_tiled(self, batch, model, 
                    batch_size=8, augment=False, bsize=224, 
+                   normalize=True, 
                    tile_overlap=0.1, return_conv=False):
     
         for imgi in batch:
             IMG, subs, shape, inds = make_tiles_ND(imgi,
                                                 bsize=bsize,
                                                 augment=augment,
+                                                normalize=normalize,
                                                 tile_overlap=tile_overlap) 
             # IMG now always returned in the form (ny*nx, nchan, ly, lx) 
             # for either tiling or augmenting
@@ -374,6 +373,9 @@ class train_set(torch.utils.data.Dataset):
         self.links = links
         self.timing = timing
         
+        if not hasattr(self,'augment'):
+            self.augment = True
+            
         # random_rotate_and_resize setup now goes here 
         if self.tyx is None:
             n = 16
@@ -474,7 +476,8 @@ class train_set(torch.utils.data.Dataset):
                                                             scale_range=self.scale_range, 
                                                             gamma_range=self.gamma_range, 
                                                             do_flip=self.do_flip, 
-                                                            ind=idx
+                                                            ind=idx,
+                                                            augment=self.augment,
                                                            )
             # print('hey', self.data[idx].shape,self.labels[idx].shape)
             
@@ -484,12 +487,16 @@ class train_set(torch.utils.data.Dataset):
                                    omni=self.omni,
                                    dim=self.dim,
                                    affinity_field=self.affinity_field
-                                  )[:-2]
+                                  )
 
-        X = out[:-1]
-        slices = out[-1]
+        X = out[:-4]
+        slices = out[-4]
+        affinity_graph = out[-1]
         masks,bd,T,mu = [torch.stack([x[(Ellipsis,)+slc] for slc in slices]) for x in X]
-        lbl = batch_labels(masks,bd,T,mu,
+        lbl = batch_labels(masks,
+                           bd,
+                           T,
+                           mu,
                            self.tyx,
                            dim=self.dim,
                            nclasses=self.nclasses,

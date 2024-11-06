@@ -21,13 +21,14 @@ from .core import UnetModel, assign_device, check_mkl, MXNET_ENABLED, parse_mode
 from .io import OMNI_INSTALLED
 from omnipose.gpu import empty_cache, ARM #, custom_nonzero_cuda
 from omnipose.utils import hysteresis_threshold
+import ncolor
 
 from torchvf.numerics import interp_vf, ivp_solver
 
 # from torchvf.utils import cluster
 
-# _MODEL_URL = 'https://www.cellpose.org/models'
-_MODEL_URL = 'https://raw.githubusercontent.com/kevinjohncutler/omnipose-models/main'
+_MODEL_URL = 'https://www.cellpose.org/models'
+# _MODEL_URL = 'https://raw.githubusercontent.com/kevinjohncutler/omnipose-models/main'
 _MODEL_DIR_ENV = os.environ.get("CELLPOSE_LOCAL_MODELS_PATH")
 _MODEL_DIR_DEFAULT = pathlib.Path.home().joinpath('.cellpose', 'models')
 MODEL_DIR = pathlib.Path(_MODEL_DIR_ENV) if _MODEL_DIR_ENV else _MODEL_DIR_DEFAULT
@@ -394,8 +395,10 @@ class CellposeModel(UnetModel):
                  model_type=None, net_avg=True, use_torch=True,
                  diam_mean=30., device=None,
                  residual_on=True, style_on=True, concatenation=False,
-                 nchan=1, nclasses=2, dim=2, omni=True, 
+                 nchan=1, nclasses=None, dim=2, omni=True, logits=False,
+                 nsample=4, # number of up/downsampling layers
                  checkpoint=False, dropout=False, kernel_size=2):
+    
         if not torch:
             if not MXNET_ENABLED:
                 use_torch = True
@@ -409,7 +412,9 @@ class CellposeModel(UnetModel):
         # initialize according to arguments 
         # these are overwritten if a model requires it (bact_omni the most restrictive)
         self.omni = omni
-        self.nclasses = nclasses 
+        self.nclasses = nclasses
+        self.logits = logits # whether to do binary classification for all classes 
+        self.nsample = nsample
         self.diam_mean = diam_mean
         self.dim = dim # 2D vs 3D
         self.nchan = nchan 
@@ -447,7 +452,6 @@ class CellposeModel(UnetModel):
             if model_type in C2_MODEL_NAMES:
                 self.nchan = 2
 
-            
             # for now, omni models cannot do net_avg 
             if self.omni:
                 net_avg = False
@@ -467,9 +471,12 @@ class CellposeModel(UnetModel):
         if pretrained_model_string is not None:
             self.omni = 'omni' in os.path.splitext(Path(pretrained_model_string).name)[0] if self.omni is None else self.omni 
 
-        # convert abstract prediction classes number to actual count
-        # flow field components increase this by dim-1
-        self.nclasses = self.nclasses + (self.dim-1)
+        
+        if not self.logits:
+            # convert abstract prediction classes number to actual count
+            # flow field components increase this by dim-1
+            self.nclasses = self.nclasses + (self.dim-1)
+
 
         # initialize network
         super().__init__(gpu=gpu, pretrained_model=False,
@@ -477,6 +484,7 @@ class CellposeModel(UnetModel):
                          residual_on=residual_on, style_on=style_on, concatenation=concatenation,
                          nclasses=self.nclasses, use_torch=self.torch, nchan=self.nchan, 
                          dim=self.dim, checkpoint=self.checkpoint, dropout=self.dropout,
+                         nsample=self.nsample,
                          kernel_size=self.kernel_size)
 
 
@@ -534,7 +542,7 @@ class CellposeModel(UnetModel):
     def eval(self, x, batch_size=8, indices=None, channels=None, channel_axis=None, 
              z_axis=None, normalize=True, invert=False, 
              rescale=None, diameter=None, do_3D=False, anisotropy=None, net_avg=True, 
-             augment=False, tile=True, tile_overlap=0.1, bsize=224, num_workers=8,
+             augment=False, tile=False, tile_overlap=0.1, bsize=224, num_workers=8,
              resample=True, interp=True, cluster=False, suppress=None, 
              boundary_seg=False, affinity_seg=False, despur=True,
              flow_threshold=0.4, mask_threshold=0.0, diam_threshold=12., niter=None,
@@ -673,20 +681,26 @@ class CellposeModel(UnetModel):
         
         # images are given has a list, especially when heterogeneous in shape
         is_grey = np.sum(channels)==0
-        slice_ndim = self.dim+(self.nchan>1 and not is_grey)+(channel_axis is not None)
-        # the logic here needs to be updated to account for the fact that images may not alreay match the expected dims
+        slice_ndim = self.dim+do_3D+(self.nchan>1 and not is_grey)+(channel_axis is not None)
+        # the logic here needs to be updated to account for the fact that images may not already match the expected dims
         # and channels, namely mono channel might have a 2-channel model. I should just check for if the number of channels could
-        # possibly match, and warn that intenral conversion will happen or may break...
+        # possibly match, and warn that internal conversion will happen or may break...
         is_list = isinstance(x, list)
         is_stack = is_image = False
+        
+        if verbose:
+            models_logger.info(f'is_grey {is_grey}, slice_ndim {slice_ndim}, dim {self.dim}, nchan {self.nchan}, is_list {is_list}')
         
         if isinstance(x, np.ndarray):
             # [0,0] is a special instance where we want to run the model on a single channel
             dim_diff = x.ndim-slice_ndim
             opt = np.array([0,1])#-is_grey
             is_image, is_stack = [dim_diff==i for i in opt]
-            correct_shape = dim_diff in opt          
-            
+            correct_shape = dim_diff in opt     
+                    
+        
+        if verbose:
+            models_logger.info(f'is_image {is_image}, is_stack {is_stack}, is_list {is_list}')
         # print('a1',interp,hysteresis,calc_trace)
         
         # allow for a dataset to be passed so that we can do batches 
@@ -699,18 +713,20 @@ class CellposeModel(UnetModel):
             models_logger.warning('input images must be a list of images, array of images, or dataloader')
         else:
             if is_list:
-                correct_shape = np.all([x[i].squeeze().ndim==slice_ndim] for i in range(len(x)))
-
+                correct_shape = np.all([x[i].squeeze().ndim == slice_ndim for i in range(len(x))])
+   
             if not correct_shape:
-                print(slice_ndim,x.ndim,is_list,is_stack)
-                models_logger.warning('input images do not match the expected number of dimensions ({}) and channels ({}) of model.'.format(self.dim,self.nchan))
+                # print(slice_ndim,x.ndim,is_list,is_stack)
+                models_logger.warning('input images do not match the expected number of dimensions ({}) \nand channels ({}) of model.'.format(self.dim,self.nchan))
+
+
 
         if verbose and (is_dataset or not (is_list or is_stack)):
             models_logger.info('Evaluating with flow_threshold %0.2f, mask_threshold %0.2f'%(flow_threshold, mask_threshold))
             if omni:
                 models_logger.info(f'using omni model, cluster {cluster}')
 
-
+        
         # Note: dataset is finetuned for basic omnipose usage. No styles are returned, some options may not be supported. 
         if is_dataset:
         
@@ -774,8 +790,10 @@ class CellposeModel(UnetModel):
                 # run the network on the batch 
                 # yf, style = self.network(batch)
                 
-                with torch.no_grad():
-                    self.net.eval() # was missing this - some layers behave differently without it 
+                with torch.no_grad(): # this should also be in self.network, redundant?
+                    # self.net.eval() # was missing this - some layers behave differently without it 
+                    # actually, self.network should have it now
+
                     if tile:
                         yf = x._run_tiled(batch,self,
                                           batch_size=batch_size,
@@ -783,7 +801,9 @@ class CellposeModel(UnetModel):
                                           augment=augment,
                                           tile_overlap=tile_overlap).unsqueeze(0)
                     else:
-                        yf = self.net(batch)[0]
+                        yf = self.network(batch,to_numpy=False)[0]
+                        # yf = self.net(batch)[0] go back to this if error 
+
                         
                     del batch
                     # print('need to add normalization / invert /rescale options in dataloader')
@@ -793,7 +813,7 @@ class CellposeModel(UnetModel):
                 # slice out padding
                 yf = yf[(Ellipsis,)+slc]
                 
-                
+                print('yf',yf.shape, yf.dtype)
                 # rescale and resample
                 if resample and rescale!=1.0:
                     yf = omnipose.data.torch_zoom(yf, 1/rescale)
@@ -1031,6 +1051,8 @@ class CellposeModel(UnetModel):
             iterator = trange(nimg, file=tqdm_out,disable=not show_progress) if nimg>1 else range(nimg)
             # note: ~ is bitwise flip, overloaded to act as elementwise not for numpy arrays
             # but for boolean variables, must use "not" operator isstead 
+            if verbose:
+                models_logger.info('Evaluating one image at a time')
             
             for i in iterator:
                 dia = diameter[i] if isinstance(diameter, list) or isinstance(diameter, np.ndarray) else diameter
@@ -1090,29 +1112,43 @@ class CellposeModel(UnetModel):
 
                 # whether or not we are using dataparallel 
                 if self.torch and self.gpu:
-                    models_logger.info('using dataparallel')
+                    models_logger.info(f'using dataparallel')
                     net = self.net.module
+                    
+                    if ARM:
+                        models_logger.info('On ARM, OMP_NUM_THREADS set to 1')
+                        os.environ['OMP_NUM_THREADS'] = '1'
+                        
                 else:
                     net = self.net
                     models_logger.info('not using dataparallel')
                     
+                if verbose: 
+                    models_logger.info(f'network initialized.')
                 
                 net.load_model(self.pretrained_model[0], cpu=(not self.gpu))
                 if not self.torch:
                     net.collect_params().grad_req = 'null'
 
-            if verbose: models_logger.info('shape before transforms.convert_image(): {}'.format(x.shape))
+            if verbose: 
+                models_logger.info('shape before transforms.convert_image(): {}'.format(x.shape))
+                models_logger.info(f'model dim: {self.dim}')
+                
 
             # This takes care of the special case of grasycale, padding with zeros if the model was trained like that
             x = transforms.convert_image(x, channels, channel_axis=channel_axis, z_axis=z_axis,
                                          do_3D=(do_3D or stitch_threshold>0), normalize=False, 
                                          invert=False, nchan=self.nchan, dim=self.dim, omni=omni)
             
-            if verbose: models_logger.info('shape after transforms.convert_image(): {}'.format(x.shape))
+            
+            if verbose: 
+                models_logger.info('shape after transforms.convert_image(): {}'.format(x.shape))
+                
             if x.ndim < self.dim+2: # we need (nimg, *dims, nchan), so 2D has 4, 3D has 5, etc. 
                 x = x[np.newaxis]
 
-                if verbose: models_logger.info('shape now {}'.format(x.shape))
+                if verbose: 
+                    models_logger.info('shape now {}'.format(x.shape))
 
             self.batch_size = batch_size
             rescale = self.diam_mean / diameter if (rescale is None and (diameter is not None and diameter>0)) else rescale
@@ -1169,12 +1205,14 @@ class CellposeModel(UnetModel):
 
     def _run_cp(self, x, compute_masks=True, normalize=True, invert=False,
                 rescale=1.0, net_avg=True, resample=True,
-                augment=False, tile=True, tile_overlap=0.1, bsize=224,
+                augment=False, tile=False, tile_overlap=0.1, bsize=224,
                 mask_threshold=0.0, diam_threshold=12., flow_threshold=0.4, niter=None, flow_factor=5.0, 
                 min_size=15, max_size=None,
                 interp=True, cluster=False, suppress=None, boundary_seg=False, affinity_seg=False, despur=True,
                 anisotropy=1.0, do_3D=False, stitch_threshold=0.0,
                 omni=False, calc_trace=False,  show_progress=True, verbose=False, pad=0):
+        
+        
         # by this point, the image(s) will already have been formatted with channels, batch, etc 
 
         tic = time.time()
@@ -1185,7 +1223,7 @@ class CellposeModel(UnetModel):
         # note that this is not the same padding as what you need for the network to run 
         pad_seq = [(pad,)*2]*self.dim + [(0,)*2] # do not pad channel axis 
         unpad = tuple([slice(pad,-pad) if pad else slice(None,None)]*self.dim) # works in case pad is zero
-        
+                
         if do_3D:
             img = np.asarray(x)
             if normalize or invert: # possibly make normalize a vector of upper-lower values  
@@ -1248,6 +1286,7 @@ class CellposeModel(UnetModel):
                         img = zoom(img,rescale,order=1)
                 yf, style = self._run_nets(img, net_avg=net_avg,
                                            augment=augment, tile=tile,
+                                           normalize=normalize, 
                                            tile_overlap=tile_overlap, 
                                            bsize=bsize)
                 # unpadding 
@@ -1564,7 +1603,7 @@ class CellposeModel(UnetModel):
         # for now, just skip this for any labels that come with a link file 
         for i,(labels,links) in enumerate(zip(train_labels,train_links)):
             if links is None:
-                train_labels[i] = omnipose.utils.format_labels(labels)
+                train_labels[i] = ncolor.format_labels(labels)
         
         # nmasks is inflated when using multi-label objects, so keep that in mind if you care about min_train_masks 
         nmasks = np.array([label.max() for label in train_labels])
@@ -1654,7 +1693,7 @@ class SizeModel():
             raise ValueError(error_message)
         
     def eval(self, x, channels=None, channel_axis=None, 
-             normalize=True, invert=False, augment=False, tile=True,
+             normalize=True, invert=False, augment=False, tile=False,
              batch_size=8, progress=None, interp=True, omni=False):
         """ Evaluation for SizeModel. Use images x to produce style or use style input to predict size of objects in image.
 

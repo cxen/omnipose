@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61", "wheel", "setuptools_scm"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "omnipose"
+# specify these in setup.py 
+dynamic = ["version",
+           "description",
+           "readme",
+           "authors", 
+           "classifiers",
+           "dependencies",
+           "optional-dependencies"]
+
+[project.scripts]
+# entry point for CLI 
+omnipose = "omnipose.__main__:main"
+
+[tool.setuptools_scm]
+write_to = "omnipose/_version.py"

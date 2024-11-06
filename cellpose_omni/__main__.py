@@ -7,8 +7,6 @@ from cellpose_omni import utils, models, io
 
 from .models import MODEL_NAMES, C2_MODEL_NAMES, BD_MODEL_NAMES, CP_MODELS
 
-import torch
-
 try:
     from cellpose_omni.gui import gui 
     GUI_ENABLED = True 
@@ -23,11 +21,12 @@ except Exception as err:
     raise
     
 
-
 from dependencies import gui_deps
     
 import logging
 logger = logging.getLogger(__name__)
+tqdm_out = utils.TqdmToLogger(logger, level=logging.INFO)
+
 
 def confirm_prompt(question):
     reply = None
@@ -80,13 +79,13 @@ def main(args):
                 print('GUI dependencies may not be installed (normal for first run).')
                 confirm = confirm_prompt('Install GUI dependencies? (Note: uses PyQt6.)')
                 if confirm:
-                    current_dir = os.path.abspath(os.path.dirname(__file__))
-                    cellpose_omni_path = os.path.dirname(current_dir)
+                    # current_dir = os.path.abspath(os.path.dirname(__file__))
+                    # cellpose_omni_path = os.path.dirname(current_dir)
                     # print('cellpose_omni_path',cellpose_omni_path)
                     # next_command = ['&&', 'omnipose'] # run omnipose again
                     # install('cellpose-omni[gui] @ file://{}#egg=cellpose-omni'.format(cellpose_omni_path)) # local version) 
                     
-                    # no need to resintall, jsut do the extras
+                    # no need to resinstall, just do the extras
                     for dep in gui_deps:
                         install(dep)
                 
@@ -101,11 +100,7 @@ def main(args):
             logger, log_file = logger_setup(args.verbose)
             print('log file',log_file)
         else:
-            print('!NEW LOGGING SETUP! To see cellpose progress, set --verbose')
-            print('No --verbose => no progress or info printed')
             logger = logging.getLogger(__name__)
-
-        use_gpu = False
 
         # find images
         if len(args.img_filter)>0:
@@ -122,9 +117,10 @@ def main(args):
                 confirm = confirm_prompt('Proceed Anyway?')
                 if not confirm:
                     exit()
-                    
-        device, gpu = models.assign_device((not args.mxnet), args.use_gpu)
         
+
+        device, gpu_available = models.assign_device(args.use_gpu, args.gpu_number)
+                
         #define available model names, right now we have three broad categories 
         builtin_model = np.any([args.pretrained_model==s for s in MODEL_NAMES])
         cellpose_model = np.any([args.pretrained_model==s for s in CP_MODELS])
@@ -149,10 +145,12 @@ def main(args):
 
         # Handle channel assignemnt for 2 vs 1 channels
         # For >2 channels, use None. 
-        if args.nchan is not None and args.nchan>1:
+        if args.nchan is not None and args.nchan==2 and not args.all_channels:
             channels = [args.chan, args.chan2]
         else:
             channels = None
+            
+        
 
         # print('ddd', args.nchan, channels)
 
@@ -229,15 +227,17 @@ def main(args):
                         logger.warning('omnipose models not available in mxnet, using pytorch')
                         args.mxnet = False
                 if cellpose_model: # ones with a size model, also never true 3d etc.                 
-                    model = models.Cellpose(gpu=gpu, device=device, model_type=args.pretrained_model, 
+                    model = models.Cellpose(gpu=args.use_gpu, device=device, model_type=args.pretrained_model, 
                                             use_torch=(not args.mxnet), omni=args.omni, 
                                             net_avg=(not args.fast_mode and not args.no_net_avg))
                 else:
                     cpmodel_path = models.model_path(args.pretrained_model, 0, True)
-                    model = models.CellposeModel(gpu=gpu, device=device, 
+                    model = models.CellposeModel(gpu=args.use_gpu, device=device, 
                                                  pretrained_model=cpmodel_path,
                                                  use_torch=True,
-                                                 nclasses=args.nclasses, 
+                                                 nclasses=args.nclasses,
+                                                 logits=args.logits,
+                                                 nsample=args.nsample,
                                                  nchan=args.nchan,
                                                  dim=args.dim, 
                                                  omni=args.omni,
@@ -245,10 +245,12 @@ def main(args):
             else:
                 if args.all_channels:
                     channels = None  
-                model = models.CellposeModel(gpu=gpu, device=device, 
+                model = models.CellposeModel(gpu=args.use_gpu, device=device, 
                                              pretrained_model=cpmodel_path,
                                              use_torch=True,
                                              nclasses=args.nclasses, 
+                                             logits=args.logits,
+                                             nsample=args.nsample,
                                              nchan=args.nchan, 
                                              dim=args.dim, 
                                              omni=args.omni,
@@ -418,8 +420,8 @@ def main(args):
                                         nchan=args.nchan)
             else:
                 model = models.CellposeModel(device=device,
-                                             gpu=gpu, # why was this not being passed in before?
-                                             use_torch=(not args.mxnet),
+                                             gpu=args.use_gpu, # why was this not being passed in before?
+                                            #  use_torch=(not args.mxnet),
                                              pretrained_model=cpmodel_path,
                                              diam_mean=szmean,
                                              residual_on=args.residual_on,
@@ -427,6 +429,8 @@ def main(args):
                                              concatenation=args.concatenation,
                                              nchan=args.nchan,
                                              nclasses=args.nclasses,
+                                             logits=args.logits,
+                                             nsample=args.nsample,
                                              dim=args.dim, # init to 2D pr 3D
                                              omni=args.omni,
                                              checkpoint=args.checkpoint,
@@ -456,7 +460,7 @@ def main(args):
                                            batch_size=args.batch_size, 
                                            dataloader=args.dataloader,
                                            num_workers=args.num_workers,
-                                           min_train_masks=args.min_train_masks,
+                                           min_train_masks=args.min_train_masks if args.logits else 0, 
                                            SGD=(not args.RAdam),
                                            tyx=args.tyx,
                                            timing=args.timing,

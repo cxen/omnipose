@@ -8,6 +8,9 @@ from PyQt6.QtCore import Qt, QTimer, pyqtSlot, QCoreApplication
 from PyQt6.QtWidgets import QMainWindow, QApplication, QSizePolicy, QWidget, QScrollBar, QSlider, QComboBox, QGridLayout, QPushButton, QFrame, QCheckBox, QLabel, QProgressBar, QLineEdit, QMessageBox, QGroupBox, QDoubleSpinBox, QPlainTextEdit, QScrollArea
 from PyQt6.QtGui import QColor, QPalette
 import pyqtgraph as pg
+
+from pyqtgraph import ViewBox
+
 # from pyqtgraph import GraphicsScene
 
 os.environ['QT_AUTO_SCREEN_SCALE_FACTOR'] = '1'
@@ -813,7 +816,7 @@ class MainW(QMainWindow):
         
         # CELL DIAMETER text field
         b+=1
-        self.diameter = 30
+        self.diameter = 0
         label = QLabel('cell diameter:')
         label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         label.setStyleSheet(label_style)
@@ -932,6 +935,8 @@ class MainW(QMainWindow):
         self.ModelChoose.setStyleSheet(self.dropdowns(width=WIDTH_5))
         self.ModelChoose.setFont(self.smallfont)
         self.ModelChoose.setCurrentIndex(current_index)
+        self.ModelChoose.activated.connect(self.model_choose)
+        
         self.l0.addWidget(self.ModelChoose, b, TOOLBAR_WIDTH//2,1,TOOLBAR_WIDTH-TOOLBAR_WIDTH//2)
 
 
@@ -1496,7 +1501,7 @@ class MainW(QMainWindow):
         self.torch = use_torch
         self.useGPU.setChecked(False)
         self.useGPU.setEnabled(False)    
-        if self.torch and core.use_gpu(use_torch=True):
+        if self.torch and core.use_gpu(use_torch=True)[-1]:
             self.useGPU.setEnabled(True)
             self.useGPU.setChecked(True)
         else:
@@ -1515,8 +1520,17 @@ class MainW(QMainWindow):
         if index > 0:
             logger.info(f'selected model {self.ModelChoose.currentText()}, loading now')
             self.initialize_model()
-            self.diameter = self.model.diam_labels
-            self.Diameter.setText('%0.2f'%self.diameter)
+            # self.diameter = self.model.diam_labels
+            
+            # only set this when selected, not if user chooses a new value 
+            bacterial = 'bact' in self.current_model
+            if bacterial:
+                self.diameter = 0.
+                self.Diameter.setText('%0.1f'%self.diameter)
+            else:
+                self.diameter = float(self.Diameter.text())
+            
+            
             logger.info(f'diameter set to {self.diameter: 0.2f} (but can be changed)')
 
     # two important things: invert size added, and initialize model takes care of selecting a model
@@ -1662,14 +1676,18 @@ class MainW(QMainWindow):
             self.gamma = val
             self.update_plot()
             
+
     def make_viewbox(self):
-        self.p0 = guiparts.ViewBoxNoRightDrag(
-            parent=self,
+        # self.p0 = guiparts.ViewBoxNoRightDrag(
+            # parent=self,
+            
+        self.p0 = ViewBox(
             lockAspect=True,
             # name="plot1",
             # border=[100, 100, 100],
             invertY=True
         )
+        
         
         
         self.p0.setCursor(QtCore.Qt.CrossCursor)
@@ -1913,7 +1931,7 @@ class MainW(QMainWindow):
         self.RGBDropDown.setCurrentIndex(self.color)
         self.view = 0
         self.RGBChoose.button(self.view).setChecked(True)
-        self.BrushChoose.setCurrentIndex(1)
+        self.BrushChoose.setCurrentIndex(0)
         self.SCheckBox.setChecked(True)
         self.SCheckBox.setEnabled(False)
         self.restore_masks = 0
@@ -2616,6 +2634,12 @@ class MainW(QMainWindow):
                                                   model_type=self.current_model,                                             
                                                   nchan=self.nchan,
                                                   nclasses=self.nclasses)
+            
+            omni_model = 'omni' in self.current_model
+            bacterial = 'bact' in self.current_model
+            if omni_model or bacterial:
+                self.NetAvg.setCurrentIndex(1) #one run net
+                
         else:
             self.nclasses = 2 + self.boundary.isChecked()
             self.model = models.CellposeModel(gpu=self.useGPU.isChecked(), 
@@ -2749,7 +2773,13 @@ class MainW(QMainWindow):
         
         # needed to be replaced with recompute_masks
         # rerun = False
-        have_enough_px = self.probslider.value() < self.cellprob # slider moves down
+        have_enough_px = self.probslider.value() > self.cellprob # slider moves up
+        print('debug',have_enough_px,self.probslider.value(),self.cellprob)
+        
+        # update thresholds
+        self.threshold, self.cellprob = self.get_thresholds()
+
+        
         # if self.cellprob != self.probslider.value():
         #     rerun = True
         #     self.cellprob = self.probslider.value()
@@ -2757,10 +2787,9 @@ class MainW(QMainWindow):
         # if self.threshold != self.threshslider.value():
         #     rerun = True
         #     self.threshold = self.threshslider.value()
-
-        # print('bbbbbb', self.recompute_masks,self.cellprob, self.threshold)
-        if not self.recompute_masks:
-            return
+        
+        # if not self.recompute_masks:
+        #     return
         
         self.threshold, self.cellprob = self.get_thresholds()
         
@@ -2800,10 +2829,13 @@ class MainW(QMainWindow):
         else:
             #self.flows[3] is p, self.flows[-1] is dP, self.flows[5] is dist/prob, self.flows[6] is bd
             
-            # must recompute flows if we add pixels, because p does not contain them
+            # must recompute flows trajectory if we add pixels, because p does not contain them
             # an alternate approach would be to compute p for the lowest allowed threshold
-            # and then never ecompute (the threshold prodces a mask that selects from existing trajectories, see get_masks)
-            p = self.flows[-2].copy() if have_enough_px else None 
+            # and then never recompute (the threshold prodces a mask that selects from existing trajectories, see get_masks)
+            # seems like the dbscanm method breaks with this, but affinity is fine... 
+            # p = self.flows[-2].copy() if have_enough_px  else None 
+            p = self.flows[-2].copy() if have_enough_px and self.affinity.isChecked() else None 
+        
             
             dP = self.flows[-1][:-self.model.dim]
             dist = self.flows[-1][self.model.dim]
@@ -2865,7 +2897,6 @@ class MainW(QMainWindow):
     def compute_model(self):
         self.progress.setValue(10)
         QApplication.processEvents() 
-
         try:
             tic=time.time()
             self.clear_all()
@@ -2881,9 +2912,10 @@ class MainW(QMainWindow):
             else:
                 data = self.stack[0].copy() # maybe chanchoose here 
             channels = self.get_channels()
+            
             self.diameter = float(self.Diameter.text())
             
-            # print('heredebug',self.stack.shape,data.shape, channels)
+            # print('heredebug',self.diameter)
             
             ### will either have to put in edge cases for worm etc or just generalize model loading to respect what is there 
             try:
@@ -2891,9 +2923,9 @@ class MainW(QMainWindow):
                 bacterial = 'bact' in self.current_model
                 if omni_model or bacterial:
                     self.NetAvg.setCurrentIndex(1) #one run net
-                if bacterial:
-                    self.diameter = 0.
-                    self.Diameter.setText('%0.1f'%self.diameter)
+                # if bacterial:
+                #     self.diameter = 0.
+                #     self.Diameter.setText('%0.1f'%self.diameter)
 
                 # allow omni to be togged manually or forced by model
                 if OMNI_INSTALLED:
@@ -2929,7 +2961,7 @@ class MainW(QMainWindow):
                              omni)
                 self.runstring.setPlainText(s)
                 self.progress.setValue(30)
-                print
+                
                 masks, flows = self.model.eval(data, channels=channels,
                                                mask_threshold=self.cellprob,
                                                flow_threshold=self.threshold,
@@ -2942,6 +2974,7 @@ class MainW(QMainWindow):
                                                progress=self.progress,
                                                verbose=self.verbose.isChecked(),
                                                omni=omni, 
+                                               tile=False,
                                                affinity_seg=self.affinity.isChecked(),
                                                cluster = self.cluster.isChecked(),
                                                transparency=True,
@@ -2952,7 +2985,7 @@ class MainW(QMainWindow):
                 print('GUI.py: NET ERROR: %s'%e)
                 self.progress.setValue(0)
                 return
-
+            
             self.progress.setValue(75)
             QApplication.processEvents() 
             #if not do_3D:

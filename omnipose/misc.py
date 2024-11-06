@@ -4,8 +4,148 @@ import subprocess
 
 # a bunch of development functions 
 
-from skimage.morphology import skeletonize
 from scipy.interpolate import splprep, splev
+
+import cv2
+import edt
+import torch
+import fastremap
+
+def unique_nonzero(labels):
+    return np.array(list(set(fastremap.unique(labels))-set((0,))))
+
+
+def random_int(N, M=None, seed=None):
+
+    if seed is None:
+        seed = np.random.randint(0, 2**32 - 1)
+        print(f'Seed: {seed}')
+    # Generate a random integer between 0 and N-1
+    return np.random.randint(0, N, M)
+
+ 
+
+
+# def argmin_cdist(X, labels):
+#     # Get unique labels and determine the boundaries where each label starts and ends
+#     unique_labels, label_starts = torch.unique_consecutive(labels, return_inverse=False, return_counts=True)
+#     label_ends = torch.cumsum(label_starts, dim=0)
+#     label_starts = label_ends - label_starts
+
+#     # Prepare a list to store the indices of the minimum summed distances
+#     argmin_indices = []
+#     summed_distances_all = torch.full((len(X),), float('nan'), device=X.device)
+    
+#     for i, label in enumerate(unique_labels):
+#         # Use the precomputed start and end indices
+#         start_idx = label_starts[i]
+#         end_idx = label_ends[i]
+#         label_indices = torch.arange(start_idx, end_idx, device=X.device)
+        
+#         # Extract the relevant coordinates
+#         X_label = X[label_indices]
+        
+#         if X_label.ndim > 1:  # Only compute if there is more than one point
+#             # Compute pairwise distances using cdist
+#             distances = torch.cdist(X_label, X_label)
+            
+#             # Sum the distances for each point within the block
+#             summed_distances = torch.nansum(distances, dim=1)
+            
+#             # Store the summed distances for all entries
+#             summed_distances_all[label_indices] = summed_distances
+            
+#             # Find the index of the minimum summed distance within the block
+#             argmin_index_in_block = torch.argmin(summed_distances)
+            
+#             # Map this index back to the original index in the contact map
+#             argmin_indices.append(label_indices[argmin_index_in_block])
+    
+#     return torch.tensor(argmin_indices, device=X.device), summed_distances_all
+
+import torch
+import numpy as np
+import edt  # Ensure this package is installed: pip install edt
+
+def argmin_cdist(X, labels, distance_values):
+    # Get unique labels and counts
+    unique_labels, label_counts = torch.unique_consecutive(labels, return_counts=True)
+    label_starts = torch.cumsum(torch.cat([torch.tensor([0], device=labels.device), label_counts[:-1]]), dim=0)
+    label_ends = torch.cumsum(label_counts, dim=0)
+    
+    # Prepare a list to store the indices of the minimum adjusted summed distances
+    argmin_indices = []
+    adjusted_summed_distances_all = torch.full((len(X),), float('nan'), device=X.device)
+    
+    for i in range(len(unique_labels)):
+        # Use the precomputed start and end indices
+        start_idx = label_starts[i]
+        end_idx = label_ends[i]
+        label_indices = torch.arange(start_idx, end_idx, device=X.device)
+        
+        # Extract the relevant coordinates and distance values
+        X_label = X[label_indices]
+        distance_values_label = distance_values[label_indices]
+        
+        if X_label.shape[0] > 1:  # Only compute if there is more than one point
+            # Compute pairwise distances using cdist
+            distances = torch.cdist(X_label, X_label)
+            
+            # Sum the distances for each point within the label
+            summed_distances = torch.sum(distances, dim=1)
+            
+            # Adjust summed distances by subtracting the distance field values
+            adjusted_summed_distances = summed_distances/(distance_values_label**0.05) # the most centered 
+            # adjusted_summed_distances = summed_distances/(1+distance_values_label*summed_distances) # nice and centered, but dominated by distance values
+            # adjusted_summed_distances = summed_distances/distance_values_label # similar to above
+            # adjusted_summed_distances = 1/distance_values_label*summed_distances#/(1+distance_values_label/summed_distances) # nice and centered
+            
+            adjusted_summed_distances = summed_distances/torch.sqrt(distance_values_label)
+            # adjusted_summed_distances = (summed_distances/distance_values_label)**0.5
+            
+            adjusted_summed_distances = summed_distances*(1+1/distance_values_label)
+            
+       
+            
+            # Store the adjusted summed distances for all entries
+            adjusted_summed_distances_all[label_indices] = adjusted_summed_distances
+                
+            # Find the index of the minimum adjusted summed distance within the label
+            argmin_index_in_label = torch.argmin(adjusted_summed_distances)
+                
+            # Map this index back to the original index in X
+            argmin_indices.append(label_indices[argmin_index_in_label])
+        else:
+            # If there's only one point, it's the medoid by default
+            argmin_indices.append(label_indices[0])
+            adjusted_summed_distances_all[label_indices] = 0  # Or the distance value itself
+    
+    return torch.tensor(argmin_indices, device=X.device), adjusted_summed_distances_all
+
+def get_medoids(labels,do_skel=True):
+    if do_skel:
+        masks = skeletonize(labels)
+        dists = np.ones_like(labels)        
+    else:
+        masks = labels
+        dists = edt.edt(labels)#,black_border=False)
+        
+        
+    coords = np.argwhere(masks>0)
+    labels = masks[tuple(coords.T)]
+    sort = np.argsort(labels)
+    sort_coords = coords[sort]
+    sort_labels = labels[sort]
+    sort_dists = dists[tuple(coords.T)][sort]
+    
+    inds, dists = argmin_cdist(torch.tensor(sort_coords).float(),
+                               torch.tensor(sort_labels).float(),
+                               torch.tensor(sort_dists).float())
+    medoids = sort_coords[inds]
+    if medoids.ndim==1:
+        medoids = medoids[None]
+    return medoids
+
 
 
 def project_to_skeletons(images,labels,augmented_affinity, device, interp, 
@@ -49,8 +189,10 @@ def project_to_skeletons(images,labels,augmented_affinity, device, interp,
         
 
     # get the skeletons
-    inner = dt>2
-    skel = skeletonize(inner, method='lee')
+    # inner = dt>2
+    # skel = skeletonize(inner, method='lee')
+    skel = skeletonize(labels, dt_thresh=2, dt=dt)
+    
 
     # label skeletons and compute affinity for parametrization
     skel_labels = (skel>0)*labels    
@@ -427,10 +569,11 @@ from skimage.feature import peak_local_max, corner_peaks
 from omnipose.utils import rescale
 from scipy.ndimage import center_of_mass, binary_erosion, binary_dilation
 from skimage import measure
-from skimage.morphology import skeletonize, medial_axis
 
 def overseg_seeds(msk, bd, mu, T, ks=1.5, 
                   rskel=True,extra_peaks=None):
+    from skimage.morphology import skeletonize, medial_axis
+
     skel = skeletonize(np.logical_xor(msk,bd))
     
     # div = divergence(mu.unsqueeze(0)).squeeze().cpu().numpy()
@@ -1110,14 +1253,53 @@ def explore_object(obj):
     display(widgets.HBox([dropdown, output]))
 
 from scipy.ndimage import uniform_filter
-def find_highest_density_box(label_matrix, box_size):
-    # Compute the cell density for each box in the image
-    cell_density = uniform_filter((label_matrix > 0).astype(float), size=box_size, mode='constant')
+def find_highest_density_box(label_matrix, box_size, mode='constant'):
+    if box_size == -1:
+        # return tuple([slice(None)]*label_matrix.ndim)
+        return tuple([slice(0,s) for s in label_matrix.shape])
+    else:
+        # Compute the cell density for each box in the image
+        cell_density = uniform_filter((label_matrix > 0).astype(float), size=box_size, mode=mode)
 
-    # Find the coordinates of the box with the highest cell density
-    max_density_coords = np.unravel_index(np.argmax(cell_density), cell_density.shape)
+        # Find the coordinates of the box with the highest cell density
+        max_density_coords = np.unravel_index(np.argmax(cell_density), cell_density.shape)
 
-    # Compute the coordinates of the box
-    box_coords = tuple(slice(max_coord - box_size // 2, max_coord + box_size // 2) for max_coord in max_density_coords)
-
-    return box_coords
+        # Compute the coordinates of the box
+        return tuple(slice(max_coord - box_size // 2, max_coord + box_size // 2) for max_coord in max_density_coords)
+    
+    
+def create_pill_mask(R, L, f = np.sqrt(2)):
+    # Determine the size of the image
+    height = 2 * R# +2 for 1px boundary at top and bottom
+    width = L + 2*R  # +2 for 1px boundary on left and right
+    
+    # Create an empty image
+    pad = 3
+    imh = height+2*pad + 1
+    imw = width+2*pad +1
+    # imh = 2*(imh//2)+1 # make odd
+    # imw = 2*(imw//2)+1
+    
+    mask = np.zeros((imh,imw), dtype=np.uint8)
+    
+    # Calculate the center of the pill shape
+    center_x = imw // 2
+    center_y = imh // 2
+    
+    # Draw the rectangular part of the pill
+    mask[center_y - R:center_y + R+1, R+pad:L+R+pad+1] = 1
+    
+    # Create a grid of coordinates
+    y, x = np.ogrid[:imh, :imw]
+    
+    # Draw the left semicircle
+    left_center_x = R+pad
+    left_circle = (x - left_center_x) ** 2 + (y - center_y) ** 2 <= f*(R ** 2)
+    mask[left_circle] = 1
+    
+    # Draw the right semicircle
+    right_center_x = L+R+pad
+    right_circle = (x - right_center_x) ** 2 + (y - center_y) ** 2 <= f*(R ** 2)
+    mask[right_circle] = 1
+    
+    return mask

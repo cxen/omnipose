@@ -1,7 +1,12 @@
 from setuptools import setup, find_packages
+import sys, os
+sys.path.append(os.path.dirname(__file__))
 
-from dependencies import install_deps, gui_deps, doc_deps, distributed_deps
-    
+from dependencies import install_deps, gui_deps, distributed_deps
+
+with open('docs/requirements.txt') as f:
+    doc_deps = [line.strip() for line in f if line.strip() and not line.startswith('#') and '-e .' not in line]
+
 with open("README.rst", "r") as fh:
     long_description = fh.read() 
 
@@ -14,10 +19,6 @@ setup(
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/kevinjohncutler/omnipose",
-    setup_requires=[
-        'pytest-runner',
-        'setuptools_scm',
-    ],
     packages=find_packages(include=['omnipose', 'cellpose_omni']),
     install_requires = install_deps,
     extras_require = {
@@ -38,6 +39,5 @@ setup(
           'omnipose = omnipose.__main__:main']
     },
     py_modules=['dependencies'],
-
 
 )

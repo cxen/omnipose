@@ -533,3 +533,10 @@ body {
 /* input:focus {
   border-color: green;
 } */
+
+
+/* Hide the Read the Docs flyout */
+body > readthedocs-flyout {
+  display: none !important;
+}
+

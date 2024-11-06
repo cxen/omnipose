@@ -7,10 +7,11 @@ from torch import optim
 import torch.nn.functional as F
 import datetime
 
-from torch.cuda.amp import autocast 
+from torch.amp import autocast 
 import torch.utils.checkpoint as cp
 
 from . import transforms, io, dynamics, utils
+
 
 # I wanted to try out an ND implementation, so this is just for testing 
 CONVND = False
@@ -292,7 +293,25 @@ class CPnet(nn.Module):
         
     def load_model(self, filename, cpu=False):
         if not cpu:
-            self.load_state_dict(torch.load(filename,map_location=torch_GPU))
+            self.load_state_dict(torch.load(filename,
+                                            map_location=torch_GPU,
+                                            weights_only=True))
+            
+
+            # checkpoint = torch.load(filename, map_location=torch_GPU,  weights_only=False)
+
+            # # Extract the state dictionary
+            # if 'state_dict' in checkpoint:
+            #     state_dict = checkpoint['state_dict']
+            # else:
+            #     state_dict = checkpoint
+                
+            # # Load the state dictionary into the model
+            # try:
+            #     self.load_state_dict(state_dict, strict=False)
+            # except Exception as e:
+            #     print('Failed to load model:', e)
+            
         else:
             self.__init__(self.nbase,
                           self.nout,
@@ -305,7 +324,7 @@ class CPnet(nn.Module):
                           self.checkpoint,
                           self.do_dropout,
                           self.kernel_size)
-            state_dict = torch.load(filename, map_location=torch_CPU)
+            state_dict = torch.load(filename, map_location=torch_CPU, weights_only=True)
             # print('ggg',state_dict)
             try:
 #                 from collections import OrderedDict

@@ -458,7 +458,7 @@ def convert_image(x, channels, channel_axis=None, z_axis=None,
                   do_3D=False, normalize=True, invert=False,
                   nchan=2, dim=2, omni=False):
     """ return image with z first, channels last and normalized intensities """
-        
+    
     # squeeze image, and if channel_axis or z_axis given, transpose image
     if x.ndim > 3:
         to_squeeze = np.array([int(isq) for isq,s in enumerate(x.shape) if s==1])
@@ -659,7 +659,7 @@ def reshape_train_test(train_data, train_labels, test_data, test_labels, channel
             len(test_data) > 0 and len(test_data)==len(test_labels)):
         test_data = None
 
-    print('reshape_train_test',train_data[0].shape,channels,channel_axis,normalize,omni)
+    # print('reshape_train_test',train_data[0].shape,channels,channel_axis,normalize,omni)
     # make data correct shape and normalize it so that 0 and 1 are 1st and 99th percentile of data
     # reshape_and_normalize_data pads the train_data with an empty channel axis if it doesn't have one (single channel images/volumes). 
     train_data, test_data, run_test = reshape_and_normalize_data(train_data, 
@@ -669,7 +669,7 @@ def reshape_train_test(train_data, train_labels, test_data, test_labels, channel
                                                                  normalize=normalize, 
                                                                  omni=omni, 
                                                                  dim=dim)
-    print('reshape_train_test_2',train_data[0].shape)
+    # print('reshape_train_test_2',train_data[0].shape)
 
     if train_data is None:
         error_message = 'training data do not all have the same number of channels'

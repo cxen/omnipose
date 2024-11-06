@@ -6,26 +6,21 @@ from skimage.morphology import remove_small_objects
 from skimage.segmentation import find_boundaries
 import networkit as nk # for connected components
 
-import torch.nn.functional as F
+# import torch.nn.functional as F
 
 import fastremap
 import os, tifffile
 import time
 import mgen #ND rotation matrix
 from . import utils
-from ncolor.format_labels import delete_spurs
-from .plot import rgb_flow
+# from ncolor.format_labels import delete_spurs
+# from .plot import rgb_flow
 
 from .gpu import empty_cache # for clearing memory after follow_flows
 
-# Use of sets...
-from numba.core.errors import NumbaDeprecationWarning, NumbaPendingDeprecationWarning
-import warnings
-warnings.simplefilter('ignore', category=NumbaPendingDeprecationWarning)
-
-from torchvf.losses import ivp_loss
-from typing import Any, Dict, List, Set, Tuple, Union, Callable
-
+# from torchvf.losses import ivp_loss
+# from typing import Any, Dict, List, Set, Tuple, Union, Callable
+from typing import List
 
 # define the lists of unique omnipose models 
 # Some were trained with 2 channel input (C2)
@@ -49,8 +44,8 @@ C1_BD_MODELS = ['plant_omni']
 C1_MODELS = []
 
 import torch
-mse = torch.nn.MSELoss()
-from .utils import torch_GPU, torch_CPU, ARM
+# mse = torch.nn.MSELoss()
+from .gpu import torch_GPU, torch_CPU, ARM
 
 # try:
 #     from sklearn.cluster import DBSCAN
@@ -170,7 +165,7 @@ def dist_to_diam(dt_pos,n):
     return 2*(n+1)*np.mean(dt_pos)
 #     return np.exp(3/2)*gmean(dt_pos[dt_pos>=gmean(dt_pos)])
 
-def diameters(masks, dt=None, dist_threshold=0):
+def diameters(masks, dt=None, dist_threshold=0, pill=False, return_length=False):
     
     """
     Calculate the mean cell diameter from a label matrix. 
@@ -196,12 +191,30 @@ def diameters(masks, dt=None, dist_threshold=0):
     if dt is None and np.any(masks):
         dt = edt.edt(np.int32(masks))
     dt_pos = np.abs(dt[dt>dist_threshold])
+          
+    # omnipose_logger.info(dt_pos.shape)
+    A = np.count_nonzero(dt_pos)
+    D = np.sum(dt_pos)
+    
     if np.any(dt_pos):
-        diam = dist_to_diam(np.abs(dt_pos),n=masks.ndim)
+        if not pill:
+            diam = dist_to_diam(np.abs(dt_pos),n=masks.ndim)
+            if return_length:
+                return diam, A/diam
+        else:
+            return pill_decomposition(A,D)
     else:
         diam = 0
+        
     return diam
+    
+def pill_decomposition(A,D):
+    R = np.sqrt((np.sqrt(A**2 + 24*np.pi*D) - A) / (2*np.pi))
+    L = (3*D - np.pi*(R**4)) / (R**3)
+    return R, L
+    
 
+    
 # ## Section II: ground-truth flow computation  
 
 # It is possible that flows can be eliminated in place of the distance field. The current distance field may not be smooth 
@@ -257,7 +270,7 @@ def labels_to_flows(labels, links=None, files=None, use_gpu=False, device=None,
         omnipose_logger.info('NOTE: computing flows for labels (could be done before to save time)')
         
         # compute flows; labels are fixed in masks_to_flows, so they need to be passed back
-        labels, dist, heat, veci = map(list,zip(*[masks_to_flows(labels[n], links=links[n], use_gpu=use_gpu, 
+        labels, dist, bd, heat, veci = map(list,zip(*[masks_to_flows(labels[n], links=links[n], use_gpu=use_gpu, 
                                                                  device=device, omni=omni, dim=dim) 
                                                   for n in trange(nimg)])) 
         
@@ -429,10 +442,10 @@ def masks_to_flows_batch(batch, links=[None], device=torch.device('cpu'),
     # calculate affinity graph for the entire concatenated stack
     steps, inds, idx, fact, sign = utils.kernel_setup(dim)
     shape = batch[0].shape
-    # edges = [np.array([-1]+[i*dL for i in range(1,nsample+1)])]+[np.array([-1,s]) for s in shape[1:]]
-    # edges = [np.array([i*dL for i in range(nsample+1)])]+[np.array([0,s]) for s in shape[1:]]
-#     edges = [np.concatenate([[-1]]+[[i*dL,i*dL-1] for i in range(1,nsample)]+[[dL*nsample]])]+[np.array([-1,s]) for s in shape[1:]]
-    edges = [np.concatenate([[i*dL,i*dL-1] for i in range(0,nsample+1)])]+[np.array([-1,s]) for s in shape[1:]]
+    # edges = [np.concatenate([[i*dL,i*dL-1] for i in range(0,nsample+1)])]+[np.array([-1,0,s-1,s]) for s in shape[1:]]
+    edges = [np.concatenate([[i*dL-1,i*dL] for i in range(0,nsample+1)])]+[np.array([-1,s]) for s in shape[1:]]
+    
+    # print('s',clabels.shape,[c.max() for c in ccoords])
 
     affinity_graph = masks_to_affinity(clabels, ccoords, steps, inds, idx, fact, sign, dim, 
                                        links=clinks, edges=edges)#, dists=cdists)
@@ -448,7 +461,7 @@ def masks_to_flows_batch(batch, links=[None], device=torch.device('cpu'),
                                  edges=edges, verbose=verbose)
 
     slices = [tuple([slice(i*dL,(i+1)*dL)]+[slice(None,None)]*(dim-1)) for i in range(nsample)]
-    return torch.tensor(clabels.astype(int),device=device), torch.tensor(boundaries,device=device), T, mu, slices, clinks, ccoords
+    return torch.tensor(clabels.astype(int),device=device), torch.tensor(boundaries,device=device), T, mu, slices, clinks, ccoords, affinity_graph
 
 # from numba import jit
 # def concatenate_labels(masks,links,nsample):
@@ -647,20 +660,20 @@ def get_links(masks,labels,bd,connectivity=1):
     return links
 
 
-import networkx as nx
-def links_to_mask(masks,links):
-    """
-    Convert linked masks to stitched masks. 
-    """
-    G = nx.from_edgelist(links)
-    l = list(nx.connected_components(G))
-    # after that we create the map dict, for get the unique id for each nodes
-    mapdict={z:x for x, y in enumerate(l) for z in y }
-    # increment the dict keys to not conflict with any existing labels
-    m = np.max(masks)+1
-    mapdict = {k:v+m for k,v in mapdict.items()}
-    # remap
-    return fastremap.remap(masks,mapdict,preserve_missing_labels=True, in_place=False)
+# import networkx as nx
+# def links_to_mask(masks,links):
+#     """
+#     Convert linked masks to stitched masks. 
+#     """
+#     G = nx.from_edgelist(links)
+#     l = list(nx.connected_components(G))
+#     # after that we create the map dict, for get the unique id for each nodes
+#     mapdict={z:x for x, y in enumerate(l) for z in y }
+#     # increment the dict keys to not conflict with any existing labels
+#     m = np.max(masks)+1
+#     mapdict = {k:v+m for k,v in mapdict.items()}
+#     # remap
+#     return fastremap.remap(masks,mapdict,preserve_missing_labels=True, in_place=False)
 
 @njit(parallel=True)
 def get_link_matrix(links, piece_masks, inds, idx, is_link):
@@ -1172,9 +1185,8 @@ def _gradient(T,d,steps,fact,
     cvals = T[central_inds]
     for ax,(ind,f) in enumerate(zip(inds[1:],fact[1:])):
 
-        vals = T[neigh_inds[ind]] # maybe go bakc to passing neigh_vals
-        vals[~isneigh[ind]] = 0
-        # T[]*mask prevent bleedover / boundary issues, big problem in stock Cellpose that got reverted!
+        vals = T[neigh_inds[ind]] # maybe go back to passing neigh_vals
+        vals[~isneigh[ind]] = 0 # T[]*mask prevent bleedover / boundary issues, big problem in stock Cellpose that got reverted!
 
         mid = len(ind)//2
         r = torch.arange(mid)
@@ -1403,12 +1415,13 @@ def compute_masks(dP, dist, affinity_graph=None, bd=None, p=None, coords=None, i
                                             calc_trace=calc_trace, verbose=verbose)
             else:
                 tr = []
-                coords = np.stack(np.nonzero(iscell_pad))
                 if verbose:
                     omnipose_logger.info('p given')
+                # print('a2',shape,p.shape,coords.shape,p.max(), p[:,~iscell_pad].shape)
+                
+                # set the points that are background to not move
+                p[:,~iscell_pad] = np.stack(np.nonzero(~iscell_pad))
                     
-            # print('a2',shape,p.shape,coords.shape)
-
 
             #calculate masks
             if (omni and OMNI_INSTALLED) or override:
@@ -1506,6 +1519,7 @@ def compute_masks(dP, dist, affinity_graph=None, bd=None, p=None, coords=None, i
         
         
         # need to reconsider this for self-contact... ended up just disabling with hole size 0
+        # print('dd',iscell_pad.shape,labels.shape)
         masks = fill_holes_and_remove_small_masks(labels, min_size=min_size, max_size=max_size, ##### utils.fill_holes_and_remove_small_masks
                                                  hole_size=hole_size, dim=dim)*iscell_pad 
         # masks = labels
@@ -1609,8 +1623,11 @@ def compute_masks(dP, dist, affinity_graph=None, bd=None, p=None, coords=None, i
     if verbose:
         executionTime0 = (time.time() - startTime0)
         omnipose_logger.info('compute_masks() execution time: {:.3g} sec'.format(executionTime0))
-        omnipose_logger.info('\texecution time per pixel: {:.6g} sec/px'.format(executionTime0/np.prod(labels.shape)))
-        omnipose_logger.info('\texecution time per cell pixel: {:.6g} sec/px'.format(np.nan if not np.count_nonzero(labels) else executionTime0/np.count_nonzero(labels)))
+        if labels is not None:
+            omnipose_logger.info('\texecution time per pixel: {:.6g} sec/px'.format(executionTime0/np.prod(labels.shape)))
+            omnipose_logger.info('\texecution time per cell pixel: {:.6g} sec/px'.format(np.nan if not np.count_nonzero(labels) else executionTime0/np.count_nonzero(labels)))
+        else:
+            omnipose_logger.info('\tno objects found')
 
     return (*ret,)
 
@@ -1619,7 +1636,7 @@ def compute_masks(dP, dist, affinity_graph=None, bd=None, p=None, coords=None, i
 
 # no reason to use njit here except for compatibility with jitted fuctions that call it 
 # this way, the same factor is used everywhere (CPU with/without interp, GPU)
-@njit()
+# @njit()
 def step_factor(t):
     """ Euler integration suppression factor.
     
@@ -1686,7 +1703,7 @@ def divergence(f,sp=None):
 
 
 def get_masks(p, bd, dist, mask, inds, nclasses=2,cluster=False,
-              diam_threshold=12., eps=None, hdbscan=False, verbose=False):
+              diam_threshold=12., eps=None, min_samples=5, hdbscan=False, verbose=False):
     """Omnipose mask recontruction algorithm.
     
     This function is called after dynamics are run. The final pixel coordinates are provided, 
@@ -1758,11 +1775,12 @@ def get_masks(p, bd, dist, mask, inds, nclasses=2,cluster=False,
     if verbose:
         omnipose_logger.info('cluster: {}, SKLEARN_ENABLED: {}'.format(cluster,SKLEARN_ENABLED))
         
+    
     if cluster and SKLEARN_ENABLED:
         if verbose:
             startTime = time.time()
             alg = ['','H']
-            omnipose_logger.info('Doing {}DBSCAN clustering with eps={}'.format(alg[hdbscan],eps))
+            omnipose_logger.info('Doing {}DBSCAN clustering with eps={}, min_samples={}'.format(alg[hdbscan],eps,min_samples))
 
         if hdbscan and not HDBSCAN_ENABLED:
             omnipose_logger.warning('HDBSCAN clustering requested but not installed. Defaulting to DBSCAN')
@@ -1770,9 +1788,9 @@ def get_masks(p, bd, dist, mask, inds, nclasses=2,cluster=False,
         if hdbscan and HDBSCAN_ENABLED:
             clusterer = HDBSCAN(cluster_selection_epsilon=eps,
                                 # allow_single_cluster=True,
-                                min_samples=3)
+                                min_samples=min_samples)
         else:
-            clusterer = DBSCAN(eps=eps, min_samples=5, n_jobs=-1)
+            clusterer = DBSCAN(eps=eps, min_samples=min_samples, n_jobs=-1)
         
         clusterer.fit(newinds)
         labels = clusterer.labels_
@@ -1786,28 +1804,39 @@ def get_masks(p, bd, dist, mask, inds, nclasses=2,cluster=False,
         
         if verbose:
             executionTime = (time.time() - startTime)
-            
             omnipose_logger.info('Execution time in seconds: ' + str(executionTime))
             omnipose_logger.info('{} unique labels found'.format(len(np.unique(labels))-1))
 
-        #### snapping outliers to nearest cluster 
-        snap = True
+        #### snapping outliers to nearest cluster
+        # there was a bug where small clusters counted as outliers, and were snapped to a very distant cluster
+        # I will fix this by enfocing a limit on distance to the nearest cluster
+        # min_samples could also be reduced... 
+        snap = 1
         if snap:
-            nearest_neighbors = NearestNeighbors(n_neighbors=50)
+            nearest_neighbors = NearestNeighbors(n_neighbors=5) # maybe should be 5 instead of 50 
             neighbors = nearest_neighbors.fit(newinds)
             o_inds = np.where(labels==-1)[0]
             if len(o_inds):
                 outliers = [newinds[i] for i in o_inds]
-                distances, indices = neighbors.kneighbors(outliers)
-
-                ns = labels[indices]
-                # if len(ns)>0:
-                l = [n[np.where(n!=-1)[0][0] if np.any(n!=-1) else 0] for n in ns]
-                # l = [n[(np.where(n!=-1)+(0,))[0][0] ] for n in ns]
+                nearest_dists, nearest_indices = neighbors.kneighbors(outliers)
+                
+                # get the labels of the nearest neighbors
+                nearest_labels = labels[nearest_indices]
+                
+                # find the first instance that is not in reference to other ouliers
+                nearest_idx = [np.where(n!=-1)[0][0] if np.any(n!=-1) else 0 for n in nearest_labels]
+                dist_thresh = eps
+                l = [nl[i] if nd[i]<dist_thresh else -1 for i,nl,nd in zip(nearest_idx,nearest_labels,nearest_dists)]
                 labels[o_inds] = l
+                if verbose:
+                    omnipose_logger.info(f'Outlier cleanup with dist threshold {dist_thresh:.2f}:')
+                    distances = [nd[i] for i,nd in zip(nearest_idx,nearest_dists)]
+                    omnipose_logger.info(f'\tmin and max distance to nearest cluster: {np.min(distances):.2f},{np.max(distances):.2f}')
+                    omnipose_logger.info('\tSnapped {} of {} outliers to nearest cluster'.format(np.sum(np.array(l)!=-1),len(o_inds)))
 
         ###
         mask[cell_px] = labels+1 # outliers have label -1
+        
     else: #this branch can have issues near edges 
         newinds = np.rint(newinds.T).astype(int)
         new_px = tuple(newinds)
@@ -1994,7 +2023,7 @@ def follow_flows(dP, dist, inds, niter=None, interp=True, use_gpu=True,
     if niter is None:
         niter = 200
     
-    niter = np.uint32(niter) 
+    niter = np.uint32(niter)
     cell_px = (Ellipsis,)+tuple(inds)
 
    # got rid of the interp vs not interp branch in favor of just using nearest interpolation in the
@@ -2013,6 +2042,8 @@ def follow_flows(dP, dist, inds, niter=None, interp=True, use_gpu=True,
     initial_points = initial_points.repeat(init_shape).float()
 
     final_points = initial_points.clone()
+
+    
     
     if inds.ndim < 2 or inds.shape[0] < dim:
         omnipose_logger.warning('WARNING: no mask pixels found')
@@ -2028,8 +2059,10 @@ def follow_flows(dP, dist, inds, niter=None, interp=True, use_gpu=True,
                                 verbose=verbose)
         
         final_points[cell_px] = final_p.squeeze()
-        
+    
     p = final_points.squeeze().cpu().numpy()
+    if verbose:
+        omnipose_logger.info('done follow_flows')
     return p, inds, tr
 
 def remove_bad_flow_masks(masks, flows, coords=None, affinity_graph=None, threshold=0.4, use_gpu=False, device=None, omni=True):
@@ -2191,7 +2224,7 @@ def random_rotate_and_resize(X, Y=None, scale_range=1., gamma_range=[.75,2.5], t
 # Now it is rerun on a per-image basis if a crop fails to capture .1 percent cell pixels (minimum). 
 # scale is just a placeholder, the point to to figure out what the true rescaling facor is
 def random_crop_warp(img, Y, tyx, v1, v2, nchan, rescale, scale_range, gamma_range, do_flip, ind, 
-                     do_labels=True, depth=0):
+                     do_labels=True, depth=0, augment=True):
     """
     This sub-fuction of `random_rotate_and_resize()` recursively performs random cropping until 
     a minimum number of cell pixels are found, then proceeds with augemntations. 
@@ -2223,6 +2256,8 @@ def random_crop_warp(img, Y, tyx, v1, v2, nchan, rescale, scale_range, gamma_ran
         nonegative value X for assigning -X to where distance=0 (deprecated, now adapts to field values)
     depth: int
         how many time this function has been called on an image 
+    augment: bool
+        whether or not to perform all non-morphological augmentations on the image (gamma, noise, etc.)
 
     Returns
     -------
@@ -2268,7 +2303,8 @@ def random_crop_warp(img, Y, tyx, v1, v2, nchan, rescale, scale_range, gamma_ran
         # ds = scale_range/2
         # scale = np.random.uniform(low=1-ds,high=1+ds,size=dim) #anisotropic scaling 
         # scale = np.random.uniform(low=1/scale_range,high=scale_range,size=dim) #anisotropic scaling 
-        scale = np.random.triangular(left=1/scale_range, mode=1, right=scale_range, size=dim) # weight to 1
+        eps = 1e-8
+        scale = np.random.triangular(left=1/(scale_range+eps), mode=1, right=scale_range+eps, size=dim) # weight to 1
         # I need to make sure the scaling does not apply to time dimension...
         if rescale is not None:
             scale *= 1. / rescale
@@ -2345,9 +2381,23 @@ def random_crop_warp(img, Y, tyx, v1, v2, nchan, rescale, scale_range, gamma_ran
             # else:
             #     # continue on, this filter helps get rid of orphaned pixels  (not perfect though)
             #     lbl = mode_filter(lbl)
+            
+    # boundary instead - fast way to check is number of unique labels 
+    if len(fastremap.unique(lbl))<2:# or cellpx==numpx: # had to disable the overdense feature for cyto2
+                    # may not actually be a problem now anyway
+        # skimage.io.imsave('/home/kcutler/DataDrive/debug/img'+str(depth)+'.png',img[0])
+        # skimage.io.imsave('/home/kcutler/DataDrive/debug/training'+str(depth)+'.png',lbl[0])
+        return random_crop_warp(img, Y, tyx, v1, v2, nchan, rescale, scale_range, 
+                                gamma_range, do_flip, ind, do_labels, depth=depth+1, augment=augment)
+        
+        
+    else:
+        # continue on, this filter helps get rid of orphaned pixels  (not perfect though)
+        lbl = mode_filter(lbl)
     
-    if np.any(lbl):
-        lbl = mode_filter(lbl)  
+    
+    # if np.any(lbl):
+    #     lbl = mode_filter(lbl)  
             
     #flows now computed in parallel in masks_to_flows_batch
     # it occurs to me that maybe we could parallelize this image augmentation too if we compromise 
@@ -2365,53 +2415,53 @@ def random_crop_warp(img, Y, tyx, v1, v2, nchan, rescale, scale_range, gamma_ran
         
         # gamma agumentation - simulates different contrast, the most important and preserves fine structure 
         gamma = np.random.triangular(left=gamma_range[0], mode=1, right=gamma_range[1])
-        imgi[k] = imgi[k] ** gamma
+        if augment:
+            imgi[k] = imgi[k] ** gamma
 
-        
-        # defocus augmentation (inaccurate, but effective)
-        if aug_choices[0]:
-            imgi[k] = gaussian_filter(imgi[k],np.random.uniform(0,2))
-        
-        # percentile clipping augmentation
-        if aug_choices[1]:
-            dp = .1 # changed this from 10 to .1, as usual pipleine uses 0.01, 10 was way too high for some images 
-            dpct = np.random.triangular(left=0, mode=0, right=dp, size=2) # weighted toward 0
-            imgi[k] = utils.normalize99(imgi[k],upper=100-dpct[0],lower=dpct[1])
+            # defocus augmentation (inaccurate, but effective)
+            if aug_choices[0]:
+                imgi[k] = gaussian_filter(imgi[k],np.random.uniform(0,2))
+            
+            # percentile clipping augmentation
+            if aug_choices[1]:
+                dp = .1 # changed this from 10 to .1, as usual pipleine uses 0.01, 10 was way too high for some images 
+                dpct = np.random.triangular(left=0, mode=0, right=dp, size=2) # weighted toward 0
+                imgi[k] = utils.normalize99(imgi[k],upper=100-dpct[0],lower=dpct[1])
 
-        # noise augmentation
-        if SKIMAGE_ENABLED and aug_choices[2]:
-            var_range = 1e-2
-            var = np.random.triangular(left=1e-8, mode=1e-8, right=var_range, size=1)
-            # imgi[k] = random_noise(utils.rescale(imgi[k]), mode="poisson")#, seed=None, clip=True)
-            # poisson is super slow... np.random.posson is faster
-            # also posson alwasy gave the same noise, which is very bad... this is 
-            # but gaussian speckle is MUCH faster,<1ms vs >4ms 
-            imgi[k] = random_noise(imgi[k], mode='speckle',var=var)
-            # imgi[k] = utils.add_gaussian_noise(imgi[k],0,var)
-            
-        # bit depth augmentation
-        if aug_choices[3]:
-            bit_shift = int(np.random.triangular(left=0, mode=8, right=14, size=1))
-            im = utils.to_16_bit(imgi[k])
-            # imgi[k] = utils.normalize99(im>>bit_shift)
-            imgi[k] = utils.rescale(im>>bit_shift)
-            
-        # edge / line artifact augmentation
-        # omnipose was hallucinating stuff at boundaries
-        if aug_choices[4]:
-            # border_mask = np.zeros(tyx, dtype=bool)
-            # border_mask = binary_dilation(border_mask, border_value=1, iterations=1)
-            # imgi[k][border_mask] = 1
+            # noise augmentation
+            if SKIMAGE_ENABLED and aug_choices[2]:
+                var_range = 1e-2
+                var = np.random.triangular(left=1e-8, mode=1e-8, right=var_range, size=1)
+                # imgi[k] = random_noise(utils.rescale(imgi[k]), mode="poisson")#, seed=None, clip=True)
+                # poisson is super slow... np.random.posson is faster
+                # also posson alwasy gave the same noise, which is very bad... this is 
+                # but gaussian speckle is MUCH faster,<1ms vs >4ms 
+                imgi[k] = random_noise(imgi[k], mode='speckle',var=var)
+                # imgi[k] = utils.add_gaussian_noise(imgi[k],0,var)
+                
+            # bit depth augmentation
+            if aug_choices[3]:
+                bit_shift = int(np.random.triangular(left=0, mode=8, right=14, size=1))
+                im = utils.to_16_bit(imgi[k])
+                # imgi[k] = utils.normalize99(im>>bit_shift)
+                imgi[k] = utils.rescale(im>>bit_shift)
+                
+            # edge / line artifact augmentation
+            # omnipose was hallucinating stuff at boundaries
+            if aug_choices[4]:
+                # border_mask = np.zeros(tyx, dtype=bool)
+                # border_mask = binary_dilation(border_mask, border_value=1, iterations=1)
+                # imgi[k][border_mask] = 1
 
-            border_inds = utils.border_indices(tyx)
-            imgi[k].flat[border_inds] *= np.random.uniform(0,1)
+                border_inds = utils.border_indices(tyx)
+                imgi[k].flat[border_inds] *= np.random.uniform(0,1)
+                
             
-        
-        # set some pixels randomly to 0 or 1         
-        # much faster than random_noise s&p 
-        if aug_choices[5]:
-            indices = np.random.rand(*tyx) < 0.001
-            imgi[k][indices] = np.random.choice([0, 1], size=np.count_nonzero(indices))
+            # set some pixels randomly to 0 or 1         
+            # much faster than random_noise s&p 
+            if aug_choices[5]:
+                indices = np.random.rand(*tyx) < 0.001
+                imgi[k][indices] = np.random.choice([0, 1], size=np.count_nonzero(indices))
 
 
         
@@ -2473,13 +2523,16 @@ def loss(self, lbl, y):
         y[:,D] distance fields at D
         y[:,D+1] boundary fields at D+1
     
-    """    
+    """   
+    
     cellmask = lbl[:,1]>0
-
-    if self.nclasses==1: # semantic segmentation
-        loss1 = self.criterion(y[:,0],cellmask) #MSE        
-        loss2 = self.criterion2(y[:,0],cellmask) #BCElogits 
-        return loss1+loss2
+    if self.nclasses==1: # semantic segmentation, generalize to logits 
+        cm = cellmask.float()
+        loss1 = self.criterion(y[:,0],cm) #MSE        
+        loss2 = self.criterion2(y[:,0],cm) #BCElogits 
+        return loss1+loss2/20
+        # return loss1
+        
     
     else:   
         # flow components are stored as the last self.dim slices 
@@ -2557,6 +2610,8 @@ def loss(self, lbl, y):
 
             lossA, lossE, lossB = self.criterionA(flow,dt,veci,dist)
             lossA *=100
+            
+            
             # print(lossA.item(),lossE.item(),lossB.item())
             
             # print(lossA, self.criterion0(flow,veci)) lossA much bigger than ivp... that deserves debugging
@@ -2568,12 +2623,12 @@ def loss(self, lbl, y):
             # lossS = self.criterionS((dist+5)/5,(dt+5)/5) # with 1
             
             
-            # the fistance field has wird stuff happening, I hope
+            # the distance field has wird stuff happening, I hope
             # that making its gradient explicitly equal to the GT flow will help
             # dims = [k for k in range(-self.dim,0)]
             
-            dims = [k for k in range(1,self.dim+1)]
-            grad = torch.stack(torch.gradient(dt,dim=dims),axis=1)
+            # dims = [k for k in range(1,self.dim+1)]
+            # grad = torch.stack(torch.gradient(dt,dim=dims),axis=1)
             
             
             
@@ -2612,7 +2667,7 @@ def loss(self, lbl, y):
             # N =  torch.square(S-torch.sum(dt>0))
             # fg_loss = N/S if S > 0 else N
                         
-            euler_loss = self.criterion0(flow,veci) / 2
+            # euler_loss = self.criterion0(flow,veci) / 2
             div = divergence_torch(veci)
             # div *= boundary 
             # div = (div-div.min())/(div.max()-div.min())
@@ -2918,6 +2973,7 @@ def fill_holes_and_remove_small_masks(masks, min_size=None, max_size=None, hole_
 
 def get_boundary(mu,mask,bd=None,affinity_graph=None,contour=False,use_gpu=False,device=None,desprue=False):
     """One way to get boundaries by considering flow dot products. Will be deprecated."""
+    
     d = mu.shape[0]
     pad = 1
     pad_seq = [(0,)*2]+[(pad,)*2]*d
@@ -3160,7 +3216,8 @@ def get_contour(labels,affinity_graph,coords=None,neighbors=None,cardinal_only=T
     labs = labels[coords]
     unique_L = fastremap.unique(labs)
 
-    np.argmin(csum)
+    # np.argmin(csum)
+    # print('ff',len(fastremap.unique(labels)))
     
     contours = parametrize_contours(steps,np.int32(labs),np.int32(unique_L),neigh_inds,step_ok, csum)
     
@@ -3176,9 +3233,12 @@ def get_contour(labels,affinity_graph,coords=None,neighbors=None,cardinal_only=T
 
 
 # @njit('(int64[:,:], int32[:], int32[:], int64[:,:], float64[:,:])', nogil=True)
-@njit
+@njit #
 def parametrize_contours(steps, labs, unique_L, neigh_inds, step_ok, csum):
     """Helper function to sort 2D contours into cyclic paths. See get_contour()."""
+    # print('enable njit for this')
+    
+    
     sign = np.sum(np.abs(steps),axis=1)
     contours = []
     s0 = 4
@@ -3720,28 +3780,7 @@ def _despur(connect, neigh_inds, indexes, steps, non_self,
     return connect
 
 
-#5x speedup using njit
-# @njit()
-# def affinity_to_edges(affinity_graph,neigh_inds,step_inds,px_inds):
-#     """Convert affinity graph to list of edge tuples for connected components labeling."""
-#     edge_list = []
-#     for s in step_inds:
-#         for p in px_inds:
-#             if affinity_graph[s,p]: 
-#                 edge_list.append((p,neigh_inds[s][p]))
-#     return edge_list
-
-# @njit()
-# def affinity_to_edges(affinity_graph,neigh_inds,step_inds,px_inds):
-#     """Convert symmetric affinity graph to list of edge tuples for connected components labeling."""
-#     edge_list = []
-#     for s in step_inds:
-#         for p in px_inds:
-#             if p <= neigh_inds[s][p] and affinity_graph[s,p]:  # upper triangular 
-#                 edge_list.append((p,neigh_inds[s][p]))
-#     return edge_list
-
-# this version is a lot faster. 
+# this version is a lot faster.
 @njit()
 def affinity_to_edges(affinity_graph,neigh_inds,step_inds,px_inds):
     """Convert symmetric affinity graph to list of edge tuples for connected components labeling."""
@@ -3756,7 +3795,8 @@ def affinity_to_edges(affinity_graph,neigh_inds,step_inds,px_inds):
                 edge_list[idx] = (p,neigh_inds[s][p])
                 idx += 1
     return edge_list[:idx] # return only the portion edge_list that contins edges 
-    
+
+
 def affinity_to_masks(affinity_graph,neigh_inds,iscell, coords,
                       cardinal=True,
                       exclude_interior=False,
