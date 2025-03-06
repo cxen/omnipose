@@ -1,6 +1,6 @@
-from PyQt6 import QtGui, QtCore
-from PyQt6.QtGui import QPainter
-from PyQt6.QtWidgets import QApplication, QRadioButton, QWidget, QDialog, QButtonGroup, QSlider, QStyle, QStyleOptionSlider, QGridLayout, QPushButton, QLabel, QLineEdit, QDialogButtonBox, QComboBox
+from PySide6 import QtGui, QtCore
+from PySide6.QtGui import QPainter
+from PySide6.QtWidgets import QApplication, QRadioButton, QWidget, QDialog, QButtonGroup, QSlider, QStyle, QStyleOptionSlider, QGridLayout, QPushButton, QLabel, QLineEdit, QDialogButtonBox, QComboBox
 import pyqtgraph as pg
 from pyqtgraph import Point
 import numpy as np
@@ -15,9 +15,9 @@ TOOLBAR_WIDTH = 7
 SPACING = 3
 WIDTH_0 = 25
 
-from PyQt6.QtWidgets import QPlainTextEdit, QFrame
+from PySide6.QtWidgets import QPlainTextEdit, QFrame
 
-from PyQt6.QtCore import QObject, QEvent
+from PySide6.QtCore import QObject, QEvent
 
 class NoMouseFilter(QObject):
     def eventFilter(self, obj, event):
@@ -28,7 +28,7 @@ class NoMouseFilter(QObject):
         return super().eventFilter(obj, event)
 
 class TextField(QPlainTextEdit):
-    clicked= QtCore.pyqtSignal()
+    clicked = QtCore.Signal()
     def __init__(self,widget,parent=None):
         super().__init__(widget)
         # self.setStyleSheet(self.parent().textbox_style)
@@ -892,9 +892,9 @@ class RangeSlider(QSlider):
 
     
 class HistLUT(pg.HistogramLUTItem):
-    sigLookupTableChanged = QtCore.pyqtSignal(object)
-    sigLevelsChanged = QtCore.pyqtSignal(object)
-    sigLevelChangeFinished = QtCore.pyqtSignal(object)
+    sigLookupTableChanged = QtCore.Signal(object)
+    sigLevelsChanged = QtCore.Signal(object)
+    sigLevelChangeFinished = QtCore.Signal(object)
 
     def __init__(self, image=None, fillHistogram=True, levelMode='mono',
                  gradientPosition='right', orientation='vertical'):
@@ -981,8 +981,8 @@ class HistLUT(pg.HistogramLUTItem):
         
                 
 class GradEditor(pg.GradientEditorItem):
-    sigGradientChanged = QtCore.pyqtSignal(object)
-    sigGradientChangeFinished = QtCore.pyqtSignal(object)
+    sigGradientChanged = QtCore.Signal(object)
+    sigGradientChangeFinished = QtCore.Signal(object)
     
     def __init__(self, *args, **kargs):
         super().__init__(*args, **kargs)
@@ -996,9 +996,9 @@ class GradEditor(pg.GradientEditorItem):
 #     # ..GraphicsScene.items(self, *args) will get Tick object as a
 #     # class of QtGui.QMultimediaWidgets.QGraphicsVideoItem in python2.7-PyQt5(5.4.0)
 
-#     sigMoving = QtCore.pyqtSignal(object, object)
-#     sigMoved = QtCore.pyqtSignal(object)
-#     sigClicked = QtCore.pyqtSignal(object, object)
+#     sigMoving = QtCore.Signal(object, object)
+#     sigMoved = QtCore.Signal(object)
+#     sigClicked = QtCore.Signal(object, object)
     
 #     # def __init__(self, pos, color, movable=True, scale=10, pen='w', removeAllowed=True):
 #     #     super().__init__(pos=pos,color=color,movable=movable,scale=scale,pen=pen,removeAllowed=removeAllowed)
@@ -1013,8 +1013,8 @@ class GradEditor(pg.GradientEditorItem):
 #         p.setHoverPen(self.hoverPen)
 #         p.drawPath(self.pg)
 
-from PyQt6.QtWidgets import QPushButton
-from PyQt6.QtGui import QPalette
+from PySide6.QtWidgets import QPushButton
+from PySide6.QtGui import QPalette
 import qtawesome as qta
 
 class IconToggleButton(QPushButton):
@@ -1062,13 +1062,13 @@ class IconToggleButton(QPushButton):
         self.toggled.emit(self.isChecked())
         
 import numpy as np
-from PyQt6.QtCore import QPointF, QRectF, QLineF
-from PyQt6.QtGui import QPainter, QPen
+from PySide6.QtCore import QPointF, QRectF, QLineF
+from PySide6.QtGui import QPainter, QPen
 from pyqtgraph import GraphicsObject
-from PyQt6.QtWidgets import QGraphicsItem
+from PySide6.QtWidgets import QGraphicsItem
 
 
-from PyQt6.QtCore import Qt
+from PySide6.QtCore import Qt
 class AffinityOverlay_old(GraphicsObject):
     def __init__(self, pixel_size=1, threshold=0.5, parent=None):
         super().__init__()
@@ -1211,12 +1211,12 @@ class AffinityOverlay_old(GraphicsObject):
 
    
 import numpy as np
-from PyQt6.QtCore import QPointF
-from PyQt6.QtGui import QPainterPath, QPen, QPolygonF
-from PyQt6.QtWidgets import QGraphicsPathItem, QGraphicsView, QGraphicsScene
+from PySide6.QtCore import QPointF
+from PySide6.QtGui import QPainterPath, QPen, QPolygonF
+from PySide6.QtWidgets import QGraphicsPathItem, QGraphicsView, QGraphicsScene
 import pyqtgraph as pg
 
-from PyQt6 import sip
+from PySide6 import sip
 
 class AffinityOverlay_new(GraphicsObject):
     """
@@ -1701,9 +1701,9 @@ import pyqtgraph as pg
 pg.setConfigOptions(useOpenGL=True)  # Attempt to enable OpenGL in pyqtgraph
 
 from pyqtgraph import GraphicsObject
-from PyQt6.QtWidgets import QGraphicsItem
-from PyQt6.QtGui import QPainter
-from PyQt6.QtCore import QRectF, Qt
+from PySide6.QtWidgets import QGraphicsItem
+from PySide6.QtGui import QPainter
+from PySide6.QtCore import QRectF, Qt
 
 import OpenGL.GL as gl
 
@@ -1810,9 +1810,9 @@ class GLLineOverlay(GraphicsObject):
 import numpy as np
 import pyqtgraph as pg
 from pyqtgraph import GraphicsObject
-from PyQt6.QtWidgets import QGraphicsItem
-from PyQt6.QtGui import QPainter
-from PyQt6.QtCore import QRectF, Qt
+from PySide6.QtWidgets import QGraphicsItem
+from PySide6.QtGui import QPainter
+from PySide6.QtCore import QRectF, Qt
 
 import OpenGL.GL as gl
 

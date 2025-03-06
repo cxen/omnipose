@@ -86,6 +86,14 @@ uninstalling and reinstalling pyqt5
    pip uninstall pyqt5 pyqt5-tools
    pip install pyqt5 pyqt5-tools pyqt5.sip
 
+If you receive the error: ``No module named PySide6.sip``, then try
+uninstalling and reinstalling pyside6
+
+::
+
+   pip uninstall pyside6 pyside6-tools
+   pip install pyside6 pyside6-tools pyside6.sip
+
 If you have errors related to OpenMP and libiomp5, then try 
 
 ::
@@ -122,6 +130,7 @@ you have installation problems.
 .. -  `pytorch`_
 .. -  `pyqtgraph`_
 .. -  `PyQt6`_
+.. -  `PySide6`_
 .. -  `numpy`_ (>=1.22.4)
 .. -  `numba`_
 .. -  `scipy`_
@@ -134,6 +143,7 @@ you have installation problems.
 
 .. .. _pyqtgraph: http://pyqtgraph.org/
 .. .. _PyQt6: http://pyqt.sourceforge.net/Docs/PyQt6/
+.. .. _PySide6: http://pyside.sourceforge.net/Docs/PySide6/
 .. .. _numpy: http://www.numpy.org/
 .. .. _numba: http://numba.pydata.org/numba-doc/latest/user/5minguide.html
 .. .. _scipy: https://www.scipy.org/

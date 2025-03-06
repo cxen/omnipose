@@ -1,4 +1,3 @@
-
 import signal, sys, os, pathlib, warnings, datetime, time
 import inspect, importlib, pkgutil
 
@@ -18,13 +17,13 @@ import numpy as np
 # np.seterr(all='raise')  # Raise exceptions instead of warnings
 
 
-from PyQt6 import QtGui, QtCore, QtWidgets
-from PyQt6.QtCore import Qt, pyqtSlot, QCoreApplication
-from PyQt6.QtWidgets import QMainWindow, QApplication, QWidget, QScrollBar, QComboBox, QGridLayout, QPushButton, QCheckBox, QLabel, QProgressBar, QLineEdit, QScrollArea
-from PyQt6.QtGui import QPalette
+from PySide6 import QtGui, QtCore, QtWidgets
+from PySide6.QtCore import Qt, Slot, QCoreApplication
+from PySide6.QtWidgets import QMainWindow, QApplication, QWidget, QScrollBar, QComboBox, QGridLayout, QPushButton, QCheckBox, QLabel, QProgressBar, QLineEdit, QScrollArea
+from PySide6.QtGui import QPalette
 
-from PyQt6.QtCore import QPoint
-from PyQt6.QtGui import QCursor, QGuiApplication
+from PySide6.QtCore import QPoint
+from PySide6.QtGui import QCursor, QGuiApplication
 
 
 
@@ -77,6 +76,8 @@ import omnipose, cellpose_omni
 import importlib
 import types
 
+from ...omnipose.gpu import is_cuda_available, is_mps_available
+
 
 def run(image=PRELOAD_IMAGE):
     start_time = time.time()  # Record start time
@@ -111,7 +112,7 @@ def run(image=PRELOAD_IMAGE):
 
     # the below code block will automatically toggle the theme with the system,
     # but the manual color definitions (everywhere I set a style sheet) can mess that up
-    @pyqtSlot()
+    @Slot()
     def sync_theme_with_system() -> None:
         theme = str(darkdetect.theme()).lower()
         theme = theme if theme in ALLOWED_THEMES else 'dark' #default to dark theme 
@@ -746,7 +747,7 @@ if __name__ == "__main__":
     # this is where we need to change init depending on whether or not we have a size model
     # or which size model to use... 
     # this should really be updated to allow for custom size models to be used, too
-    # I guess most doing that will not be using the GUI, but still an important feature 
+    # I guess most doing that will not be using the GUI, but still an important feature
 
 
 

@@ -2,6 +2,8 @@ from setuptools import setup, find_packages
 import sys, os
 sys.path.append(os.path.dirname(__file__))
 
+# dependencies.py is the source of truth for all dependencies
+# See DEPENDENCY_MANAGEMENT.md for details on how dependencies are managed
 from dependencies import install_deps, gui_deps, distributed_deps
 
 with open('docs/requirements.txt') as f:
@@ -20,7 +22,17 @@ setup(
     long_description_content_type="text/markdown",
     url="https://github.com/kevinjohncutler/omnipose",
     packages=find_packages(include=['omnipose', 'cellpose_omni']),
-    install_requires = install_deps,
+    install_requires = [
+        'numpy',
+        'scipy',
+        'torch',
+        'tqdm',
+        'numba',
+        'opencv-python-headless',
+        'matplotlib',
+        'scikit-image',
+        'aicsimageio',
+    ],
     extras_require = {
       'gui': gui_deps,
       'docs': doc_deps,

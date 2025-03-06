@@ -1,4 +1,3 @@
-
 from cellpose_omni.io import check_dir
 
 from omnipose.logger import setup_logger
@@ -8,6 +7,9 @@ logger = setup_logger('gui')
 import signal, sys, os, pathlib, warnings, datetime, time
 from ..utils import download_url_to_file, masks_to_outlines, diameters 
 
+import pyqtgraph as pg
+# Specify the Qt library to use
+pg.setConfigOption('useQtLibrary', 'PySide6')
 
 #logo 
 ICON_PATH = pathlib.Path.home().joinpath('.omnipose','logo.png')
@@ -41,4 +43,3 @@ GAMMA_URL = 'https://github.com/kevinjohncutler/omnipose/blob/main/gui/gamma.svg
 if not GAMMA_PATH.is_file():
     print('downloading gamma icon from', GAMMA_URL,'to', GAMMA_PATH)
     download_url_to_file(GAMMA_URL, GAMMA_PATH, progress=True)
-    

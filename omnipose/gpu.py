@@ -1,81 +1,126 @@
 import platform  
 import os
 import multiprocessing
+import sys
+import logging
 
 from .logger import setup_logger
 gpu_logger = setup_logger('gpu')
 
-ARM = 'arm' in platform.processor() # the backend chack for apple silicon does not work on intel macs
-if ARM:
-    nt = str(multiprocessing.cpu_count())
-    nt = "1" # this helps with gui crashing on subprocess, no hit to performance? 
-    gpu_logger.info(f'On ARM, OMP_NUM_THREADS set to CPU core count = {nt}, PARLAY_NUM_THREADS set to 1.')
-    os.environ['OMP_NUM_THREADS'] = nt # for "1 leaked semaphore objects" error on macOS during training 
-    os.environ["PARLAY_NUM_THREADS"] = "1" # for dbscan to work on ARM; anything above 1 is unstable 
+# Configure logging
+gpu_logger = logging.getLogger(__name__)
+
+# Set PyTorch MPS environment variables for better Apple Silicon support
+if sys.platform == 'darwin':
+    # Enable MPS fallback for operations not yet supported in Metal
+    os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
     
-    # os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
-    # os.environ["PYTORCH_MPS_MEMORY_ALLOCATOR"] = "1"
-    # os.environ["PYTORCH_MPS_SYNC"] = "0"
-    # os.environ["PYTORCH_MPS_ALLOW_RESERVED_MEMORY"] = "1"
+    # Memory allocation settings for MPS
+    os.environ["PYTORCH_MPS_MEMORY_ALLOCATOR"] = "1"
+    
+    # Disable sync to improve performance
+    os.environ["PYTORCH_MPS_SYNC"] = "0"
+    
+    # Allow reserved memory for better performance
+    os.environ["PYTORCH_MPS_ALLOW_RESERVED_MEMORY"] = "1"
 
 # import torch after setting env variables 
 import torch
 
-
-# ARM = torch.backends.mps.is_available() and ARM
-# torch_GPU = torch.device('mps') if ARM else torch.device('cuda')
-# torch_CPU = torch.device('cpu')
-try: #backends not available in order versions of torch 
-    ARM = torch.backends.mps.is_available() and ARM
-except Exception as e:
-    ARM = False
-    gpu_logger.warning('resnet_torch.py backend check.',e)
-torch_GPU = torch.device('mps') if ARM else torch.device('cuda')
-torch_CPU = torch.device('cpu')
-
-try: # similar backward incompatibility where torch.mps does not even exist 
-    if ARM:
-        from torch.mps import empty_cache
-    else: 
-        from torch.cuda import empty_cache
-        
-except Exception as e:
-    empty_cache = torch.cuda.empty_cache
-    gpu_logger.info(e)
-
-def use_gpu(gpu_number=0, use_torch=True):
-    """ check if gpu works """
-    if use_torch:
-        return _use_gpu_torch(gpu_number)
-    else:
-        raise ValueError('cellpose only runs with pytorch now')
-
-def _use_gpu_torch(gpu_number=0):
+# Check for Apple Silicon
+ARM = False
+if sys.platform == 'darwin':
     try:
-        if gpu_number is None:
-            gpu_number = 0
-        device = torch.device(f'mps:{gpu_number}') if ARM else torch.device(f'cuda:{gpu_number}')
-        _ = torch.zeros([1, 2, 3]).to(device)
-        return device, True
-    except:# Exception as e:
-        gpu_logger.info('TORCH GPU version not installed/working.')#, e)
-        device = torch_CPU
-        return device, False
+        # Check if running on Apple Silicon
+        ARM = os.uname().machine == 'arm64'
+    except:
+        ARM = False
 
+# Check if MPS is available for Apple Silicon GPU
+def is_mps_available():
+    if hasattr(torch, 'has_mps') and torch.has_mps and ARM:
+        return torch.backends.mps.is_available() and torch.backends.mps.is_built()
+    return False
 
-# @torch.jit.script
-# def custom_nonzero_cuda(tensor):
-#   """Returns a tuple of tensors containing the non-zero indices of the given tensor
-#   and the corresponding elements of the tensor."""
+# Check if CUDA is available for NVIDIA GPU
+def is_cuda_available():
+    return torch.cuda.is_available()
 
-#   indices = torch.empty_like(tensor, dtype=torch.long)
-#   elements = torch.empty_like(tensor)
+# Make GPU device available if possible, otherwise CPU
+def get_device():
+    if is_cuda_available():
+        gpu_logger.info('CUDA GPU detected and enabled!')
+        return torch.device('cuda')
+    elif is_mps_available():
+        gpu_logger.info('Apple Silicon GPU detected and enabled!')
+        return torch.device('mps')
+    else:
+        gpu_logger.info('No GPU detected. Using CPU.')
+        return torch.device('cpu')
 
-#   block_size = 32
-#   num_blocks = (tensor.numel() + block_size - 1) // block_size
+# Initialize device
+device = get_device()
 
-#   torch.cuda.launch_kernel(
-#       'custom_nonzero_kernel', num_blocks, block_size,
-#       tensor, indices, elements)
+# Move tensor to appropriate device (GPU if available, otherwise CPU)
+def torch_GPU(x):
+    if not isinstance(x, torch.Tensor):
+        x = torch.from_numpy(x)
+    return x.to(device)
 
-#   return indices, elements
+# Move tensor to CPU
+def torch_CPU(x):
+    if not isinstance(x, torch.Tensor):
+        x = torch.from_numpy(x)
+    return x.cpu()
+
+# Empty the GPU cache to free memory
+def empty_cache():
+    if is_cuda_available():
+        torch.cuda.empty_cache()
+    elif is_mps_available():
+        # MPS doesn't have an equivalent yet, but we can try to manage memory
+        import gc
+        gc.collect()
+
+# Get GPU info
+def get_gpu_info():
+    if is_cuda_available():
+        gpu_name = torch.cuda.get_device_name(0)
+        gpu_memory_total = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+        return f"NVIDIA GPU: {gpu_name}, Memory: {gpu_memory_total:.2f} GB"
+    elif is_mps_available():
+        return "Apple Silicon GPU (MPS)"
+    else:
+        return "No GPU detected, using CPU"
+
+# Check if tensor operations use MKL
+def mkl_enabled():
+    try:
+        import numpy as np
+        from numpy.distutils.system_info import get_info
+        mkl_info = get_info('mkl')
+        return len(mkl_info) > 0
+    except:
+        return False
+
+# Show help message for GPU support
+def gpu_help():
+    if not is_cuda_available() and not is_mps_available():
+        gpu_logger.warning('No GPU detected. To use a GPU:')
+        if sys.platform == 'darwin' and ARM:
+            gpu_logger.warning('- You have Apple Silicon. Make sure PyTorch is 2.0+ with MPS support')
+        elif sys.platform == 'darwin':
+            gpu_logger.warning('- You have macOS on Intel. NVIDIA GPUs are not supported')
+        else:
+            gpu_logger.warning('- For NVIDIA GPUs, install CUDA and a compatible PyTorch version')
+            gpu_logger.warning('- See https://pytorch.org/get-started/locally/')
+    else:
+        info = get_gpu_info()
+        gpu_logger.info(f'Using: {info}')
+
+# Print initial GPU info
+gpu_help()
+
+# Exception for non-torch frameworks
+def non_torch_warning():
+    raise ValueError('Omnipose only runs with PyTorch now')

@@ -4312,4 +4312,3 @@ def split_spacetime(augmented_affinity,mask,verbose=False):
     
     return lbl, logs
 
-   

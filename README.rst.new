@@ -1,0 +1,94 @@
+Installing Omnipose
+--------------------
+
+Omnipose can be installed from PyPI:
+
+.. code-block::
+
+   pip install omnipose
+
+or from the GitHub repository:
+
+.. code-block::
+
+   pip install git+https://github.com/kevinjohncutler/omnipose.git
+
+Python 3.8, 3.9, 3.10, 3.11, 3.12+ are supported. 
+
+For GPU support:
+- Apple Silicon Macs: Make sure to use PyTorch 2.6.0+ for MPS (Metal Performance Shaders) support
+- NVIDIA GPUs: Use PyTorch 2.6.0 with CUDA 12.1+ support
+
+Creating a conda environment
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+You can create a new environment with all the dependencies:
+
+.. code-block::
+
+   conda create -n omnipose 'python=3.12' pytorch
+   conda activate omnipose
+   pip install omnipose
+
+Or with specific PyTorch versions:
+
+For Apple Silicon Macs:
+
+.. code-block::
+
+   conda create -n omnipose 'python=3.12'
+   conda activate omnipose
+   pip install torch torchvision
+   pip install omnipose
+
+For NVIDIA GPUs:
+
+.. code-block::
+
+   conda create -n omnipose 'python=3.12'
+   conda activate omnipose
+   pip install torch torchvision pytorch-cuda=12.1 -c pytorch -c nvidia 
+   pip install omnipose
+
+Issues with PySide6/PyQtGraph
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+If you experience issues with the GUI:
+
+.. code-block::
+
+   pip install pyside6 pyqtgraph --force-reinstall
+
+Installation issues
+~~~~~~~~~~~~~~~~~~
+
+If you are having issues with the installation, please create an
+issue on the GitHub repository:
+https://github.com/kevinjohncutler/omnipose/issues
+
+GPU Acceleration
+---------------
+
+Omnipose runs on CPU on macOS, Windows, and Linux. PyTorch has
+excellent support for NVIDIA CUDA for GPU acceleration. For macOS 
+users with Apple Silicon (M1/M2/M3), the latest PyTorch version provides 
+support for GPU acceleration using Metal Performance Shaders (MPS).
+
+PyTorch 2.6.0+ provides excellent support for Apple's Metal Performance Shaders (MPS) 
+on Apple Silicon. You can check your current PyTorch version through pip:
+
+.. code-block::
+
+   pip show torch
+
+Your PyTorch version (2.6.0) is compatible with CUDA 12.1+. For older GPUs or driver
+versions, you may need to use an earlier PyTorch version. See the official
+documentation on installing both the `most recent <https://pytorch.org/get-started/locally/>`__ and
+`previous <https://pytorch.org/get-started/previous-versions/>`__
+combinations of CUDA and PyTorch to suit your needs. Accordingly, you
+may install PyTorch with the specific CUDA version you need:
+
+.. code-block::
+
+   conda create -n omnipose 'python=3.12' pytorch==2.6.0 torchvision==0.17.0 pytorch-cuda=12.1 \
+   -c pytorch -c nvidia 

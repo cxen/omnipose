@@ -64,7 +64,7 @@ def main(args):
             print(f"GUI not available: {GUI_ERROR}")
             if GUI_IMPORT:
                 print("GUI dependencies may not be installed. Prompting...")
-                confirm = confirm_prompt('Install GUI dependencies? (PyQt6, etc.)')
+                confirm = confirm_prompt('Install GUI dependencies? (PySide6, etc.)')
                 if confirm:
                     for dep in gui_deps:
                         install(dep)

@@ -1,0 +1,37 @@
+name: omnipose
+channels:
+  - pytorch
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.12
+  - pip
+  - numpy
+  - scipy
+  - matplotlib
+  - scikit-image
+  - scikit-learn
+  - natsort
+  - tqdm
+  - fastremap
+  - tifffile
+  - networkx
+  - pandas
+  - cmapy
+  - pip:
+    - torch==2.6.0
+    - torchvision>=0.17.0
+    - pyside6>=6.5.0
+    - pyqtgraph>=0.12.4
+    - qtpy
+    - superqt
+    - opencv-python-headless
+    - zarr
+    - ome-zarr
+    - distributed
+    - rasterio
+    - connected-components-3d
+    - cellpose>=2.2.2
+    - gputools
+    - edt
+    - fire

@@ -73,22 +73,22 @@ How to install Omnipose
    also work just as well.
 
 2. Open an anaconda prompt / command prompt with ``conda`` for **python
-   3** in the path.
+    3.12+** (recommended) or **3.10+** (minimum).
 
 3. To create a new environment for CPU only, run
 
    ::
 
-      conda create -n omnipose 'python==3.10.12' pytorch
+      conda create -n omnipose 'python=3.12' pytorch
 
    For users with NVIDIA GPUs, add these additional arguments:
 
    ::
 
-      torchvision pytorch-cuda=11.8 -c pytorch -c nvidia 
+      torchvision pytorch-cuda=12.1 -c pytorch -c nvidia 
 
-   See `GPU support <#gpu-support>`__ for more details. Python 3.10 is
-   not a strict requirement; see `Python
+   See `GPU support <#gpu-support>`__ for more details. Python 3.12 is
+   recommended but not a strict requirement; see `Python
    compatibility <#python-compatibility>`__ for more about choosing your
    python version.
 
@@ -129,15 +129,10 @@ Python compatibility
 
 .. _python_start:
 
-I have tested Omnipose extensively on Python version 3.8.5 and have
-encountered issues on some lower versions. Versions up to 3.10.11 have
-been confirmed compatible, but I have encountered bugs with the GUI
-dependencies on 3.11+. For those users with system or global pyenv
+Omnipose has been tested with Python versions 3.8.5 through 3.12. For
 python3 installations, check your python version by running
 ``python -V`` before making your conda environment and choose a
-different version. That way, there is no crosstalk between pip-installed
-packages inside and outside your environment. So if you have 3.x.y
-installed via pyenv etc., install your environment with 3.x.z instead.
+compatible version.
 
 .. _python_stop:
 
@@ -148,7 +143,7 @@ Pyenv versus Conda
 
 Pyenv also works great for creating an environment for installing
 Omnipose (and it also works a lot better for installing Napari alongside
-it, in my experience - use ``pip install "napari[pyqt6]"`` to ensure no Qt conflicts). 
+it, in my experience - use ``pip install "napari[pyside6]"`` to ensure no Qt conflicts). 
 Simply set your global version anywhere from
 3.8.5-3.10.11 and run ``pip install omnipose``. I've had no problems
 with GPU compatibility with this method on Linux, as pip collects all
@@ -164,47 +159,35 @@ GPU support
 .. _gpu_start:
 
 Omnipose runs on CPU on macOS, Windows, and Linux. PyTorch has
-historically only supported NVIDIA GPUs, but has more more recently
-begun supporting Apple Silicon GPUs. It looks AMD support may be
-available these days (ROCm), but I have not tested that out. Windows and
-Linux installs are straightforward:
+GPU support on Windows and Linux with CUDA, and on macOS with Apple Silicon through the MPS
+(Metal Performance Shaders) backend.
 
-Your PyTorch version (>=1.6) needs to be compatible with your NVIDIA
-driver. Older cards may not be supported by the latest drivers and thus
-not supported by the latest PyTorch version. See the official
+**For Apple Silicon (M1/M2/M3) users**:
+   
+PyTorch 2.6.0+ provides excellent support for Apple's Metal Performance Shaders (MPS) 
+backend for GPU acceleration. To use your Apple Silicon GPU, install the latest 
+PyTorch version through pip:
+
+.. code:: bash
+
+   pip install torch==2.6.0 torchvision==0.17.0
+
+Omnipose will automatically detect and use the MPS device. The performance
+improvement can be 3-5x faster than CPU-only operation, depending on your specific model.
+
+**For NVIDIA GPU users**:
+
+Your PyTorch version (2.6.0) is compatible with CUDA 12.1+. For older GPUs or driver
+versions, you may need to use an earlier PyTorch version. See the official
 documentation on installing both the `most recent <https://pytorch.org/get-started/locally/>`__ and
 `previous <https://pytorch.org/get-started/previous-versions/>`__
 combinations of CUDA and PyTorch to suit your needs. Accordingly, you
-can get started with CUDA 11.8 by making the following environment:
+may modify the following command:
 
-::
+.. code:: bash
 
-   conda create -n omnipose 'python==3.10.12' pytorch torchvision pytorch-cuda=11.8 \
+   conda create -n omnipose 'python=3.12' pytorch==2.6.0 torchvision==0.17.0 pytorch-cuda=12.1 \
    -c pytorch -c nvidia 
-
-Note that the official PyTorch command includes torchaudio, but that is
-not needed for Omnipose. (*torchvision appears to be necessary these
-days*). If you are on older drivers, you can get started with an older
-version of CUDA, *e.g.* 10.2:
-
-::
-
-   conda create -n omnipose pytorch=1.8.2 cudatoolkit=10.2 -c pytorch-lts
-
-For Apple Silicon, download
-`omnipose_mac_environment.yml <omnipose_mac_environment.yml>`__ and
-install the environment:
-
-::
-
-   conda env create -f <path_to_environment_file>
-   conda activate omnipose
-
-You may edit this yml to change the name or python version etc. For more
-notes on Apple Silicon development, see `this
-thread <https://github.com/kevinjohncutler/omnipose/issues/14>`__. On
-all systems, remember that you may need to use ipykernel to use the
-omnipose environment in a notebook.
 
 .. _gpu_stop:
 
@@ -349,7 +332,7 @@ the code:
    osx_arm64 builds. I then installed Omnipose, which only needed to pip
    install the few other packages like ncolor and mgen that were not
    already installed via conda. I also needed to upgrade my fork of
-   Cellpose, where the GUI lives, to PyQt6 (previously PyQt5). An
+   Cellpose, where the GUI lives, to PySide6 (previously PyQt5). An
    environment.yaml is sorely needed to make this process easier.
    However, on osx_arm64 I found it necessary to additionally include a
    ``--collect all skimage``:

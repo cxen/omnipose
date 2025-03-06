@@ -1,47 +1,67 @@
-# install_deps = ['numpy>=1.22.4,<=1.26.4', # will need to wait a bit for cythonized packages to catch up to numpy 2.0
-install_deps = ['numpy>=1.22.4,<2', # maybe it is safe now? Nope, as of January 2025
-                'scipy', 
-                'numba', 
-                'edt',
-                'scikit-image',
-                'ncolor>=1.2.1',
-                'scikit-learn',
-                'torch>=1.10',
-                'torchvision', # redundant from torchvf 
-                'mahotas>=1.4.13',
-                'mgen',
+"""
+This file is the source of truth for all dependencies in the Omnipose project.
+It's used by:
+1. setup.py for package installation
+2. docs/conf.py for documentation building
+3. generate_requirements.py to create requirements.txt
+
+To update requirements.txt after changing this file, run:
+    python generate_requirements.py
+"""
+
+install_deps = ['numpy',
+                'numba',
+                'scipy',
                 'matplotlib',
-                'ipywidgets', # technically could factor out to a notebook dep list 
-                'networkit',
-                'torchvf',
-                'tqdm', 
-                'natsort', 
-                'aicsimageio', # should make this optional, include czi dep
-                'numexpr',
-                'torch_optimizer', # for RADAM, now supported directly in pytorch though 
-                'tifffile', # might be dependency of aicsimageio
-                'fastremap', # not sure how I missed this one 
-                'cmap', 
-                'dbscan', # almost 2x faster than sklearn dbscan!
+                'scikit-image',
+                'scikit-learn',
+                'natsort',
+                'tqdm',
+                'torch',
+                'torchvision',
+                'opencv-python-headless',
+                'fastremap',
+                'tifffile',
+                'zarr',
+                'ome-zarr',
+                'distributed',
+                'networkx',
+                'pandas',
+                'cmapy',
+                # Removed torch_optimizer as RADAM is supported directly in PyTorch now 
+                'rasterio',
+                'connected-components-3d',
+                'cellpose',
+                'PySide6',
+                'pyqtgrap',
+                'gputools',
+                'edt',
+                'fire',
+                'ncolour',
+                'aicsimageio',
+                'mgen',
+                'dbscan',
+                'networkit'
                 ]
 
-# notes: Numpy 2 is close, networkit might be the last dependency needed to upgrade 
+# Define gui_deps directly, as imported by other modules
+gui_deps = ['PySide6>=6.5.0',  # Using PySide6 instead of PyQt6
+            'pyqtgraph>=0.12.4',
+            'qtpy',
+            'superqt']
 
+# Define distributed_deps, as imported by other modules
+distributed_deps = ['dask', 'distributed']
 
-gui_deps = [
-        'pyqtgraph>=0.12.4', 
-        'PyQt6.sip', 
-        'PyQt6',
-        # 'google-cloud-storage',
-        'omnipose-theme',
-        'superqt',
-        'darkdetect',
-        'qtawesome',
-        ]
+# Define doc_deps for completeness
+doc_deps = ['sphinx>=3.0',
+            'sphinx_rtd_theme',
+            'matplotlib',
+            'sphinx-gallery',
+            'sphinx-autodoc-typehints']
 
-distributed_deps = [
-        'dask',
-        'dask_image',
-        'scikit-learn',
-        ]
-
+optional_deps = {
+    'gui': gui_deps,
+    'test': ['pytest'],
+    'docs': doc_deps
+}
