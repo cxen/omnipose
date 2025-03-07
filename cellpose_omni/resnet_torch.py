@@ -414,7 +414,7 @@ class CPnet(nn.Module):
                               self.do_dropout,
                               self.kernel_size, self.scale_factor, self.dilation,
                               device=torch.device('cpu'))
-                state_dict = torch.load(filename, map_location=torch_CPU, weights_only=True)
+                state_dict = torch.load(filename, map_location=torch.device('cpu'), weights_only=True)
                 self.load_state_dict(state_dict, strict=False)
             except Exception as e:
                 print(f'Failed to load model: {e}')

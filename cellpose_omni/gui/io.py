@@ -490,7 +490,20 @@ def _masks_to_gui(parent, format_labels=False):
 
 
     if parent.ncolor:
-        masks, ncol = ncolor.label(masks,return_n=True) 
+        try:
+            # Check if masks has any content before calling ncolor
+            if parent.ncells > 0:
+                masks, ncol = ncolor.label(masks, return_n=True, max_depth=5) 
+            else:
+                # Handle the case where there are no masks
+                ncol = 0
+                # Keep masks as is - already empty/zeros
+        except Exception as e:
+            logger.warning(f"Error applying ncolor: {e}")
+            ncol = 0
+            # Fallback to basic formatting
+            masks = np.reshape(masks, shape)
+            masks = masks.astype(np.uint16) if masks.max()<(2**16-1) else masks.astype(np.uint32)
     else:
         masks = np.reshape(masks, shape)
         masks = masks.astype(np.uint16) if masks.max()<(2**16-1) else masks.astype(np.uint32)
