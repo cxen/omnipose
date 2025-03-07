@@ -174,3 +174,121 @@ def get_arg_parser():
     development_args.add_argument('--timing', action='store_true', help='flag to output timing information for select modules')
 
     return parser
+
+import os
+import sys
+import json
+from .gpu import gpu_info, device
+from .logger import setup_logger
+
+cli_logger = setup_logger('cli')
+
+def diagnose_gpu():
+    """Print detailed information about GPU setup and availability"""
+    info = gpu_info()
+    print("\n===== Omnipose GPU Diagnostics =====")
+    print(f"PyTorch Version: {info['pytorch_version']}")
+    print(f"Platform: {info['platform']}")
+    print(f"Processor: {info['processor']}")
+    print(f"Device Being Used: {info['device_used']}")
+    
+    # CUDA details
+    print("\n----- CUDA Information -----")
+    if info.get("cuda_available", False):
+        print(f"CUDA Available: Yes")
+        print(f"CUDA Version: {info['cuda_version']}")
+        print(f"CUDA Devices: {info['cuda_device_count']}")
+        print(f"Device Name: {info['cuda_device_name']}")
+        print(f"Memory Allocated: {info['cuda_memory_allocated']}")
+        print(f"Memory Reserved: {info['cuda_memory_cached']}")
+    else:
+        print("CUDA Available: No")
+    
+    # MPS details (Apple Silicon)
+    print("\n----- Apple Silicon (MPS) Information -----")
+    if "mps_available" in info:
+        print(f"MPS Available: {'Yes' if info['mps_available'] else 'No'}")
+        print(f"MPS Built: {'Yes' if info['mps_built'] else 'No'}")
+        print("\nMPS Environment Variables:")
+        for var, value in info["mps_env_vars"].items():
+            print(f"  {var}: {value}")
+    else:
+        print("MPS Support: Not available in this PyTorch build")
+    
+    # Recommendations
+    print("\n===== Recommendations =====")
+    if str(device) == 'cpu' and (info.get("cuda_available", False) or info.get("mps_available", False)):
+        print("WARNING: GPU is available but not being used!")
+        if info.get("mps_available", False):
+            print("Suggestions for Apple Silicon:")
+            print("  1. Set environment variable: export PYTORCH_ENABLE_MPS_FALLBACK=1")
+            print("  2. Set environment variable: export PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.0")
+            print("  3. Try running with: omnipose --use_gpu")
+        if info.get("cuda_available", False):
+            print("Suggestions for NVIDIA GPU:")
+            print("  1. Ensure you have the correct CUDA drivers")
+            print("  2. Try running with: omnipose --use_gpu")
+    elif str(device) == 'mps':
+        print("Using Apple Silicon GPU (MPS):")
+        print("  - If you experience hanging or crashes, try these solutions:")
+        print("  1. Force CPU: export OMNIPOSE_FORCE_CPU=1")
+        print("  2. Run: omnipose --no_gpu")
+        print("  3. Upgrade PyTorch: pip install --upgrade torch")
+    elif str(device) == 'cuda':
+        print("Using NVIDIA CUDA GPU")
+        print("  - If you experience out-of-memory errors:")
+        print("  1. Try reducing batch size: omnipose --batch_size 8")
+        print("  2. Use model averaging instead of model stacking: omnipose --no_stack")
+    
+    return info
+
+def toggle_gpu_mode(enable=True):
+    """Enable or disable GPU usage via environment variables"""
+    if enable:
+        os.environ["OMNIPOSE_FORCE_CPU"] = "0"
+        print("GPU mode enabled for next Omnipose run.")
+        print("If you experience issues, run 'omnipose --diagnose_gpu' for troubleshooting.")
+    else:
+        os.environ["OMNIPOSE_FORCE_CPU"] = "1"
+        print("GPU mode disabled for next Omnipose run.")
+    
+    # Save the setting to user's environment if they want
+    save = input("Save this setting for future sessions? (y/n): ")
+    if save.lower() == 'y':
+        import platform
+        if platform.system() == "Windows":
+            print("To save the setting on Windows:")
+            if enable:
+                print("  setx OMNIPOSE_FORCE_CPU 0")
+            else:
+                print("  setx OMNIPOSE_FORCE_CPU 1")
+        elif platform.system() in ("Darwin", "Linux"):
+            shell = os.environ.get("SHELL", "").split("/")[-1]
+            if shell in ("bash", "zsh"):
+                rcfile = ".zshrc" if shell == "zsh" else ".bashrc"
+                print(f"To save the setting, add this line to your ~/{rcfile}:")
+                if enable:
+                    print('  export OMNIPOSE_FORCE_CPU=0')
+                else:
+                    print('  export OMNIPOSE_FORCE_CPU=1')
+
+def handle_command():
+    parser = argparse.ArgumentParser(description='Omnipose GPU diagnostics and utilities')
+    parser.add_argument('--diagnose_gpu', action='store_true', help='Run GPU diagnostics')
+    parser.add_argument('--enable_gpu', action='store_true', help='Enable GPU usage')
+    parser.add_argument('--disable_gpu', action='store_true', help='Disable GPU usage')
+    
+    args, unknown = parser.parse_known_args()
+    
+    if args.diagnose_gpu:
+        diagnose_gpu()
+        sys.exit(0)
+    elif args.enable_gpu:
+        toggle_gpu_mode(True)
+        sys.exit(0)
+    elif args.disable_gpu:
+        toggle_gpu_mode(False)
+        sys.exit(0)
+
+if __name__ == "__main__":
+    handle_command()

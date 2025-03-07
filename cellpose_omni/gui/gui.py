@@ -101,8 +101,13 @@ def run(image=PRELOAD_IMAGE):
     size = screen.availableGeometry()
     clipboard = app.clipboard()
 
-    qdarktheme.clear_cache()
-
+    # Try to clear qdarktheme cache if the method exists
+    try:
+        if hasattr(qdarktheme, 'clear_cache'):
+            qdarktheme.clear_cache()
+        # Otherwise it's likely a newer version that doesn't need cache clearing
+    except Exception as e:
+        print(f"Note: Couldn't clear qdarktheme cache: {e}")
 
     app_icon = QtGui.QIcon()
     icon_path = str(ICON_PATH.resolve())

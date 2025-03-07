@@ -12,7 +12,7 @@ from omnipose.plot import rgb_flow
 # print('need to add acb_mse to deps')
 
 import omnipose
-from omnipose.gpu import use_gpu
+from omnipose.gpu import use_gpu, get_device, is_cuda_available, is_mps_available
 
 # from multiprocessing import Pool, cpu_count
 # from functools import partial
@@ -61,57 +61,34 @@ def parse_model_string(pretrained_model):
     concatenation = ostrs[2]=='on'
     return residual_on, style_on, concatenation
 
-def assign_device(gpu_number=0):
-    """
-    Assign device to use for model - GPU if available and user specified, otherwise CPU
-    
-    Parameters
-    ----------
-    gpu_number: int (optional, default 0)
-        which GPU to use (if more than one)
-        
-    Returns
-    -------
-    device : torch device
-        device used for training model
-    gpu_available : bool
-        whether or not GPU is available
-    """
-    import torch
-    
+def assign_device(gpu=False, gpu_number=None):
+    """assign device to use for torch"""
     try:
-        # Use the updated GPU detection functions
         from omnipose.gpu import is_cuda_available, is_mps_available, use_gpu
         
         # Handle legacy behavior where use_gpu returns just a boolean
         result = use_gpu(gpu_number)
         
-        # Check what was returned - if it's a tuple, unpack it normally
         if isinstance(result, tuple) and len(result) == 2:
-            device, gpu_available = result
+            # If use_gpu returns (boolean, device)
+            gpu_available, device = result
         else:
             # If use_gpu only returned a boolean indicating availability
-            gpu_available = bool(result)
-            # Make sure we're using an integer for gpu_number, not a boolean
-            if isinstance(gpu_number, bool):
-                gpu_number = 0
-                
-            # Check for available GPU types
-            if gpu_available:
-                if is_cuda_available():
-                    device = torch.device(f'cuda:{gpu_number}')
-                elif is_mps_available():
-                    device = torch.device('mps')
-                else:
-                    device = torch.device('cpu')
-                    gpu_available = False
-            else:
-                device = torch.device('cpu')
+            gpu_available = result
+        
+        if gpu and gpu_available:
+            device = get_device()
+            print('>>> using GPU')
+        else:
+            device = torch.device('cpu')
+            print('>>> using CPU')
             
-        return device, gpu_available
-    except Exception as e:
-        print(f"Error assigning device: {e}")
-        return torch.device('cpu'), False
+    except:
+        device = torch.device('cpu')
+        print('>>> using CPU')
+        gpu_available = False
+        
+    return device, gpu_available
 
 def check_mkl(use_torch=True):
     #core_logger.info('Running test snippet to check if MKL-DNN working')
