@@ -21,7 +21,7 @@ install_deps = ['numpy',
                 'torch',
                 'torchvision',
                 'opencv-python-headless',
-                'fastremap>=1.13.0',  # Critical dependency - explicitly specify version
+                'fastremap',
                 'tifffile',
                 'zarr',
                 'ome-zarr',
@@ -31,14 +31,15 @@ install_deps = ['numpy',
                 'cmapy',
                 'rasterio',
                 'connected-components-3d',
-                'edt>=2.3.0',  # Critical dependency - explicitly specify version 
+                'edt',
                 'fire',
-                'ncolor>=0.1.0',  # Critical dependency - explicitly specify version
+                'ncolor',
                 'aicsimageio',
                 'mgen',
                 'dbscan',
                 'networkit',
                 'torchvf',
+                'rich'
                 ]
 
 # Define gui_deps directly, as imported by other modules

@@ -112,7 +112,7 @@ def get_device_preference():
                 return torch_CPU
                 
         # Use MPS for Apple Silicon
-        gpu_logger.info("mps detected and enabled!")
+        gpu_logger.info("MPS detected and enabled!")
         # Enable fallbacks for operations not supported by MPS
         os.environ["PYTORCH_MPS_ENABLE_FALLBACK"] = "1"
         return torch_MPS

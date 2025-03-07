@@ -139,8 +139,6 @@ dmypy.json
 .idea/
 .vscode/
 .DS_Store
-docs/.DS_Store
-scripts/.DS_Store
-scripts/.DS_Store
-docs/.DS_Store
-omnipose/_version.py
+*/.DS_Store
+*/_version.py
+
