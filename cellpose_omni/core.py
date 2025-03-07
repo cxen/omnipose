@@ -132,11 +132,39 @@ class UnetModel():
         
         # assign GPU
         if device is None:
-            # oops, broke cpu somehow 
-            self.device, gpu_available = assign_device(self.gpu)
+            # Make sure device is a torch.device object, not a function
+            if gpu and torch.cuda.is_available():
+                self.device = torch.device('cuda')
+            elif gpu and hasattr(torch, 'backends') and hasattr(torch.backends, 'mps') and \
+                 hasattr(torch.backends.mps, 'is_available') and torch.backends.mps.is_available():
+                self.device = torch.device('mps')
+            else:
+                self.device = torch.device('cpu')
         else:
-            self.device = device
-            self.gpu = self.device.type=='mps' if ARM else self.device.type=='cuda'
+            # Ensure the passed device is a torch.device object
+            if isinstance(device, torch.device):
+                self.device = device
+            else:
+                # Handle the case where device might be a string or function
+                if callable(device):
+                    # If device is a function, call it to get the actual device
+                    try:
+                        device_result = device()
+                        if isinstance(device_result, torch.device):
+                            self.device = device_result
+                        else:
+                            self.device = torch.device('cpu')
+                            core_logger.warning("Device function did not return a torch.device - using CPU")
+                    except Exception as e:
+                        self.device = torch.device('cpu')
+                        core_logger.error(f"Error calling device function: {e} - using CPU")
+                else:
+                    # Try to convert to a torch.device if it's a string
+                    try:
+                        self.device = torch.device(device)
+                    except:
+                        self.device = torch.device('cpu')
+                        core_logger.warning(f"Could not convert {device} to a torch.device - using CPU")
 
         
         if use_torch and not self.gpu:

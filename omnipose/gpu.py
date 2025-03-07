@@ -34,8 +34,9 @@ if sys.platform == 'darwin':
 ARM = platform.machine() == 'arm64' or platform.processor() == 'arm'  # For Apple Silicon detection
 
 # Device allocation helpers
-torch_GPU = torch.device('cuda')  # Default CUDA device if available
-torch_CPU = torch.device('cpu')   # CPU device
+torch_CPU = torch.device("cpu")
+torch_CUDA = torch.device("cuda:0")
+torch_MPS = torch.device("mps:0")  # Apple Silicon GPU
 
 # Set default OMP threads to 1 on Apple Silicon for better performance
 if platform.processor() == 'arm' and platform.system() == 'Darwin':
@@ -106,7 +107,7 @@ def get_device_preference():
         if os.environ.get('OMNIPOSE_DISABLE_MPS', '0') == '1':
             gpu_logger.info("MPS available but disabled by OMNIPOSE_DISABLE_MPS=1")
             if torch.cuda.is_available():
-                return torch_GPU
+                return torch_CUDA
             else:
                 return torch_CPU
                 
@@ -114,11 +115,11 @@ def get_device_preference():
         gpu_logger.info("mps detected and enabled!")
         # Enable fallbacks for operations not supported by MPS
         os.environ["PYTORCH_MPS_ENABLE_FALLBACK"] = "1"
-        return torch.device('mps')
+        return torch_MPS
         
     # Check for CUDA
     if torch.cuda.is_available():
-        return torch_GPU
+        return torch_CUDA
     
     return torch_CPU
 
@@ -140,7 +141,7 @@ def get_device():
             return torch_CPU
     
     # If CUDA GPU
-    elif device_pref == torch_GPU:
+    elif device_pref == torch_CUDA:
         try:
             gpu_name = torch.cuda.get_device_name(0)
             gpu_memory_total = torch.cuda.get_device_properties(0).total_memory / (1024**3)
