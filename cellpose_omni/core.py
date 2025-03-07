@@ -416,7 +416,8 @@ class UnetModel():
         del X 
         
         if self.mkldnn:
-            self.net.to(torch_CPU)
+            # Replace the function reference with a proper torch device object
+            self.net.to(torch.device('cpu'))
             
         if to_numpy:
             y = self._from_device(y)
