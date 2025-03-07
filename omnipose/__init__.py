@@ -23,9 +23,17 @@ def launch_gui():
         if QApplication.instance() is None:
             app = QApplication(sys.argv)
             
+        # Import shutdown handler
+        from .shutdown import handler as shutdown_handler
+        shutdown_handler.connect_to_app(app)
+            
         # Now import GUI and create instance
         from cellpose_omni.gui.gui import GUI
         gui = GUI()
+        
+        # Connect cleanup to our shutdown handler
+        shutdown_handler.shutdown_requested.connect(gui.cleanup_resources)
+        
         return gui
     except ImportError as e:
         print(f"Failed to import GUI: {e}")

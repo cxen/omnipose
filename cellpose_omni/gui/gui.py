@@ -1,17 +1,8 @@
 import signal, sys, os, pathlib, warnings, datetime, time
 import inspect, importlib, pkgutil
 
-# def handle_exception(exc_type, exc_value, exc_traceback):
-#     if issubclass(exc_type, KeyboardInterrupt):
-#         sys.__excepthook__(exc_type, exc_value, exc_traceback)
-#         return
-#     print("Uncaught exception:", exc_type, exc_value)
-#     import traceback
-#     traceback.print_tb(exc_traceback)
-
-# sys.excepthook = handle_exception
-
-# os.environ["QT_DEBUG_PLUGINS"] = "1"
+# Add this import near the top of the file
+from omnipose.shutdown import handler as shutdown_handler
 
 import numpy as np
 # np.seterr(all='raise')  # Raise exceptions instead of warnings
@@ -91,6 +82,9 @@ def run(image=PRELOAD_IMAGE):
     warnings.filterwarnings("ignore")
     QCoreApplication.setApplicationName('Omnipose')
     app = QApplication(sys.argv)
+    
+    # Connect our shutdown handler to the app
+    shutdown_handler.connect_to_app(app)
 
     # screen = app.primaryScreen()
     # New: detect monitor from mouse cursor
@@ -303,6 +297,9 @@ class MainW(QMainWindow):
         
         end_time = time.time()  # Record end time
         print(f"Init Time: {end_time - start_time:.4f} seconds")
+        
+        # Connect cleanup method to shutdown signal
+        shutdown_handler.shutdown_requested.connect(self.cleanup_resources)
 
     def load_all_submodules(self):
         """
@@ -623,6 +620,32 @@ class MainW(QMainWindow):
         else:
             print("Error: No QApplication instance found")
             return 1
+
+    def cleanup_resources(self):
+        """
+        Clean up resources before application exit.
+        This prevents errors during shutdown by properly releasing graphics resources.
+        """
+        logger.info("Cleaning up GUI resources before shutdown")
+        
+        # Hide the window first to prevent additional rendering
+        self.hide()
+        
+        # Clear pyqtgraph items that might cause issues
+        if hasattr(self, 'win') and self.win is not None:
+            # Remove items from the ViewBox that might cause issues
+            if hasattr(self.win, 'scene'):
+                self.win.clear()
+        
+        # Clear image data
+        if hasattr(self, 'img'):
+            self.img.clear()
+        
+        # Reset other resources that might be accessed during shutdown
+        self.stack = None
+        self.flows = None
+        
+        logger.info("GUI resources cleaned up successfully")
                             
 # prevents gui from running under import 
 if __name__ == "__main__":
