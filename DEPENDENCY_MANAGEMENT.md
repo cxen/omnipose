@@ -2,36 +2,63 @@
 
 This document explains how dependencies are managed in the Omnipose project.
 
-## Dependency Files
+## Single Source of Truth
 
-The project uses two main files for dependency management:
+All dependencies are defined in a single file: `dependencies.py`. This file contains lists for:
 
-1. **`dependencies.py`** - The source of truth for all dependencies
-   - Contains comprehensive dependency lists with version specifications
-   - Used directly by `setup.py` and documentation building
-   - Organized into categories: `install_deps`, `gui_deps`, `distributed_deps`, `doc_deps`
+- Core dependencies (`install_deps`) - required for basic functionality
+- GUI dependencies (`gui_deps`) - required for the GUI interface
+- Distributed computing dependencies (`distributed_deps`) - for parallel processing
+- Documentation dependencies (`doc_deps`) - for building documentation
 
-2. **`requirements.txt`** - Simplified requirements for direct pip installation
-   - Generated from `dependencies.py`
-   - Contains only core dependencies needed for basic functionality
-   - Used for quick installation via `pip install -r requirements.txt`
+## Installation
+
+When installing Omnipose with pip:
+
+```bash
+pip install omnipose
+```
+
+Only the core dependencies are installed.
+
+For additional features, install with extras:
+
+```bash
+# For GUI support
+pip install omnipose[gui]
+
+# For documentation building
+pip install omnipose[docs]
+
+# For all features
+pip install omnipose[all]
+```
+
+## Development Installation
+
+When installing for development:
+
+```bash
+git clone https://github.com/kevinjohncutler/omnipose.git
+cd omnipose
+pip install -e .[all]
+```
 
 ## Updating Dependencies
 
-When updating dependencies:
+To update dependencies:
 
-1. **Always update `dependencies.py` first**
-   - Add/modify dependencies with appropriate version constraints
-   - Organize dependencies into the appropriate category
+1. Edit `dependencies.py` with your changes
+2. Run `python generate_requirements.py` to update requirements.txt
+3. Test the installation with your changes
 
-2. **Generate `requirements.txt` afterward**
-   - Run `python generate_requirements.py`
-   - This ensures consistency between both files
+## Critical Dependencies
 
-Never modify `requirements.txt` directly as it will be overwritten when regenerated.
+The following dependencies are critical for Omnipose functionality:
 
-## Installation Options
+- fastremap: For efficient mask manipulation
+- ncolor: For proper coloring of masks
+- edt: For distance transforms 
+- torch: For neural network operations
 
-- **Basic installation:** `pip install -r requirements.txt`
-- **Full installation:** `pip install -e .` or `pip install .`
-- **With optional dependencies:** `pip install -e .[gui]` or `pip install -e .[all]`
+These are all included in the core `install_deps` list.

@@ -9,6 +9,7 @@ To update requirements.txt after changing this file, run:
     python generate_requirements.py
 """
 
+# Core dependencies required for basic functionality
 install_deps = ['numpy',
                 'numba',
                 'scipy',
@@ -20,7 +21,7 @@ install_deps = ['numpy',
                 'torch',
                 'torchvision',
                 'opencv-python-headless',
-                'fastremap',
+                'fastremap>=1.13.0',  # Critical dependency - explicitly specify version
                 'tifffile',
                 'zarr',
                 'ome-zarr',
@@ -28,25 +29,20 @@ install_deps = ['numpy',
                 'networkx',
                 'pandas',
                 'cmapy',
-                # Removed torch_optimizer as RADAM is supported directly in PyTorch now 
                 'rasterio',
                 'connected-components-3d',
-                'cellpose',
-                'PySide6',
-                'pyqtgrap',
-                'gputools',
-                'edt',
+                'edt>=2.3.0',  # Critical dependency - explicitly specify version 
                 'fire',
-                'ncolour',
+                'ncolor>=0.1.0',  # Critical dependency - explicitly specify version
                 'aicsimageio',
                 'mgen',
                 'dbscan',
                 'networkit',
-                'torchvf'
+                'torchvf',
                 ]
 
 # Define gui_deps directly, as imported by other modules
-gui_deps = ['PySide6',  # Using PySide6 instead of PyQt6
+gui_deps = ['PySide6',
             'pyqtgraph',
             'qtpy',
             'superqt',
@@ -66,8 +62,10 @@ doc_deps = ['sphinx',
             'sphinx-gallery',
             'sphinx-autodoc-typehints']
 
+# All available extras
 optional_deps = {
     'gui': gui_deps,
     'test': ['pytest'],
-    'docs': doc_deps
+    'docs': doc_deps,
+    'all': gui_deps + distributed_deps + doc_deps + ['pytest']
 }
