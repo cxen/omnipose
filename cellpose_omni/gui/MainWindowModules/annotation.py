@@ -1,4 +1,4 @@
-from PyQt6.QtGui import QPen, QBrush, QPainterPath, QTransform
+from PySide6.QtGui import QPen, QBrush, QPainterPath, QTransform
 import numpy as np
 
 def toggle_removals(self):

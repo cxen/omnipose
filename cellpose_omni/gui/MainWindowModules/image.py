@@ -1,13 +1,13 @@
 from pyqtgraph import ViewBox
 import pyqtgraph as pg
-from PyQt6.QtCore import Qt, pyqtSlot, QCoreApplication
+from PySide6.QtCore import Qt, Slot, QCoreApplication
 
-from PyQt6.QtWidgets import QGraphicsPathItem
-from PyQt6.QtGui import QPen, QBrush, QPainterPath, QTransform
-from PyQt6.QtGui import QCursor
-from PyQt6.QtCore import QPointF
+from PySide6.QtWidgets import QGraphicsPathItem
+from PySide6.QtGui import QPen, QBrush, QPainterPath, QTransform
+from PySide6.QtGui import QCursor
+from PySide6.QtCore import QPointF
 
-from PyQt6 import QtGui, QtCore, QtWidgets
+from PySide6 import QtGui, QtCore, QtWidgets
 
 from .. import guiparts
 

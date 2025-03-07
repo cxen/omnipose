@@ -5,7 +5,7 @@ from .. import io
 
 import time
 
-from PyQt6.QtWidgets import QApplication # could do all in init then import * in these 
+from PySide6.QtWidgets import QApplication # could do all in init then import * in these 
 
 OMNI_INSTALLED = True
 from omnipose.utils import normalize99, to_8_bit
@@ -44,17 +44,26 @@ def model_choose(self):
     logger.info(f'diameter set to {self.diameter: 0.2f} (but can be changed)')
 
 # two important things: invert size added, and initialize model takes care of selecting a model
-def check_gpu(self, use_torch=True):
-    # also decide whether or not to use torch
-    self.torch = use_torch
-    self.useGPU.setChecked(False)
-    self.useGPU.setEnabled(False)    
-    if self.torch and gpu.use_gpu(use_torch=True)[-1]:
+def check_gpu(self):
+    """Check if GPU is available and switch if needed"""
+    # First try to import torch to see if it's even installed
+    try:
+        import torch
+        self.torch = True
+        # print('torch installed')
+    except:
+        self.torch = False
+        print('torch not installed')
+        
+    # Use updated GPU detection functions
+    if self.torch and (gpu.is_cuda_available() or gpu.is_mps_available()):
         self.useGPU.setEnabled(True)
         self.useGPU.setChecked(True)
+        print('>>> GPU mode turned on')
     else:
-        self.useGPU.setStyleSheet("color: rgb(80,80,80);")
-        
+        self.useGPU.setEnabled(False)
+        self.useGPU.setChecked(False)
+        print('>>> GPU mode not available')
 
 def get_model_path(self):
     self.current_model = self.ModelChoose.currentText()
@@ -70,7 +79,7 @@ def initialize_model(self):
 
     if self.current_model in models.MODEL_NAMES:
 
-        # make sure 2-channel models are initialized correctly
+        # make sure -channel models are initialized correctly
         if self.current_model in models.C2_MODEL_NAMES:
             self.nchan = 2
             self.ChanNumber.setText(str(self.nchan))

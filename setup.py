@@ -48,7 +48,8 @@ setup(
     ],
     entry_points = {
         'console_scripts': [
-          'omnipose = omnipose.__main__:main']
+          'omnipose=omnipose:run_omnipose',
+        ],
     },
     py_modules=['dependencies'],
 

@@ -1,8 +1,11 @@
-import platform  
 import os
-import multiprocessing
 import sys
+import platform
 import logging
+import torch
+import numpy as np
+from pathlib import Path
+from torch import autocast
 
 from .logger import setup_logger
 gpu_logger = setup_logger('gpu')
@@ -24,39 +27,82 @@ if sys.platform == 'darwin':
     # Allow reserved memory for better performance
     os.environ["PYTORCH_MPS_ALLOW_RESERVED_MEMORY"] = "1"
 
-# import torch after setting env variables 
-import torch
+# Platform detection
+ARM = platform.machine() == 'arm64' or platform.processor() == 'arm'  # For Apple Silicon detection
 
-# Check for Apple Silicon
-ARM = False
-if sys.platform == 'darwin':
+# Device allocation helpers
+torch_GPU = torch.device('cuda')  # Default CUDA device if available
+torch_CPU = torch.device('cpu')   # CPU device
+
+def is_cuda_available():
+    """Check if CUDA is available on this system"""
     try:
-        # Check if running on Apple Silicon
-        ARM = os.uname().machine == 'arm64'
-    except:
-        ARM = False
+        return torch.cuda.is_available()
+    except (AssertionError, ImportError, RuntimeError):
+        return False
 
-# Check if MPS is available for Apple Silicon GPU
 def is_mps_available():
-    if hasattr(torch, 'has_mps') and torch.has_mps and ARM:
-        return torch.backends.mps.is_available() and torch.backends.mps.is_built()
+    """Check if MPS (Metal Performance Shaders) is available for Apple Silicon"""
+    try:
+        if ARM and hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+            return True
+    except (AssertionError, ImportError, RuntimeError, AttributeError):
+        pass
     return False
 
-# Check if CUDA is available for NVIDIA GPU
-def is_cuda_available():
-    return torch.cuda.is_available()
+def get_device_preference():
+    """Get device preference from environment variables"""
+    device_pref = os.environ.get('OMNIPOSE_DEVICE', '').lower()
+    if device_pref == 'cpu':
+        return 'cpu'
+    elif device_pref == 'cuda' and is_cuda_available():
+        return 'cuda'
+    elif device_pref == 'mps' and is_mps_available():
+        return 'mps'
+    return None  # Auto-select based on availability
+
+def use_gpu(gpu_number=0):
+    """
+    Assign device to use for model - GPU if available, otherwise CPU
+    
+    Parameters
+    ----------
+    gpu_number: int (optional, default 0)
+        which GPU to use (if more than one)
+        
+    Returns
+    -------
+    tuple (device, gpu_available)
+        device: torch.device
+            device object to use for computations
+        gpu_available: bool
+            whether a GPU was successfully assigned
+    """
+    # Check for preference from environment
+    device_pref = get_device_preference()
+    
+    # If CUDA is available and preferred or auto-selecting
+    if (device_pref in [None, 'cuda']) and is_cuda_available():
+        device = torch.device(f'cuda:{gpu_number}')
+        return device, True
+    
+    # If MPS is available and preferred or auto-selecting
+    if (device_pref in [None, 'mps']) and is_mps_available():
+        device = torch.device('mps')
+        return device, True
+    
+    # Fallback to CPU
+    device = torch.device('cpu')
+    return device, False
 
 # Make GPU device available if possible, otherwise CPU
 def get_device():
-    if is_cuda_available():
-        gpu_logger.info('CUDA GPU detected and enabled!')
-        return torch.device('cuda')
-    elif is_mps_available():
-        gpu_logger.info('Apple Silicon GPU detected and enabled!')
-        return torch.device('mps')
+    device, gpu_available = use_gpu()
+    if gpu_available:
+        gpu_logger.info(f'{device} detected and enabled!')
     else:
         gpu_logger.info('No GPU detected. Using CPU.')
-        return torch.device('cpu')
+    return device
 
 # Initialize device
 device = get_device()
@@ -75,12 +121,13 @@ def torch_CPU(x):
 
 # Empty the GPU cache to free memory
 def empty_cache():
-    if is_cuda_available():
-        torch.cuda.empty_cache()
-    elif is_mps_available():
-        # MPS doesn't have an equivalent yet, but we can try to manage memory
-        import gc
-        gc.collect()
+    """Clear GPU memory cache if available"""
+    try:
+        if is_cuda_available():
+            torch.cuda.empty_cache()
+        # MPS doesn't have an empty_cache method yet
+    except Exception:
+        pass
 
 # Get GPU info
 def get_gpu_info():

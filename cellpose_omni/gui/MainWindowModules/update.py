@@ -2,10 +2,10 @@ from .. import logger # from __init__.py in parent directory
 from omnipose.utils import normalize99
 import numpy as np
 
-from PyQt6.QtGui import QPalette
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QGraphicsItem
-from PyQt6 import QtCore
+from PySide6.QtGui import QPalette
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QGraphicsItem
+from PySide6 import QtCore
 import pyqtgraph as pg
 
 class NonInteractiveHistogramLUTItem(pg.HistogramLUTItem):

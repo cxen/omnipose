@@ -9,7 +9,7 @@ from ..io import imread, imsave, outlines_to_text, logger_setup
 logger, log_file = logger_setup()
 
 try:
-    from PyQt6.QtWidgets import QFileDialog
+    from PySide6.QtWidgets import QFileDialog
     GUI = True
 except:
     GUI = False

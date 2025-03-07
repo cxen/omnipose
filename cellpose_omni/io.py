@@ -20,7 +20,7 @@ except Exception as e:
 from . import utils, plot, transforms
 
 try:
-    from PyQt6 import QtGui, QtCore, Qt, QtWidgets
+    from PySide6 import QtGui, QtCore, Qt, QtWidgets
     GUI = True
 except:
     GUI = False

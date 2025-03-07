@@ -1,5 +1,5 @@
-# from PyQt6.QtWidgets import QAction
-from PyQt6.QtGui import QAction
+
+from PySide6.QtGui import QAction
 
 from . import io
 # from ..io import save_server

@@ -1,10 +1,16 @@
-# from . import core, utils
-# from .__main__ import main
-# import pkg_resources
-# __version__ = pkg_resources.get_distribution("omnipose").version
+"""
+Cellpose Omnipose package
+"""
+# Define modules that should be available when imported
+__all__ = ['models', 'utils', 'io', 'gui', 'core']
+
+# Import GUI if available
+try:
+    from . import gui
+except ImportError:
+    pass
 
 import pkg_resources
-__all__ = ['core', 'models', 'io', 'metrics', 'plot']
 __version__ = pkg_resources.get_distribution("omnipose").version
 def __getattr__(name):
     if name in __all__:

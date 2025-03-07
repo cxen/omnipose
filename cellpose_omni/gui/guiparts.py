@@ -570,7 +570,7 @@ class ImageDraw(pg.ImageItem):
             for j in range(n_tuples):
                 f_inds = tuples[j]
                 b_inds = tuple(S-1-np.array(tuples[-(j+1)]))
-                for f,b in zip(f_inds,b_inds):
+                for f,b in zip(f_inds,b):
                     support += np.logical_and(affinity[f][source_slc], affinity[b][target_slc])
                     
 
@@ -1216,7 +1216,8 @@ from PySide6.QtGui import QPainterPath, QPen, QPolygonF
 from PySide6.QtWidgets import QGraphicsPathItem, QGraphicsView, QGraphicsScene
 import pyqtgraph as pg
 
-from PySide6 import sip
+# from PySide6 import sip    # remove this line
+from shiboken6 import VoidPtr  # PySide6 uses Shiboken for low-level pointers
 
 class AffinityOverlay_new(GraphicsObject):
     """
@@ -1345,13 +1346,13 @@ class AffinityOverlay_new(GraphicsObject):
     #     """
     #     Convert a NumPy array of shape (npts, 2) into a QPolygonF.
     #     This version explicitly specifies the number of bytes so that the
-    #     sip.voidptr has a known size.
+    #     VoidPtr has a known size. size.
     #     """
     #     poly = QPolygonF()
     #     npts = pts.shape[0]
     #     poly.resize(npts)
     #     total_bytes = npts * 2 * 8  # npts * 2 coordinates * 8 bytes per double
-    #     vp = sip.voidptr(poly.data(), total_bytes, True)
+    #     vp = shiboken6.VoidPtr(poly.data(), total_bytes, True)
     #     mem = np.frombuffer(vp, dtype=np.float64).reshape((npts, 2))
     #     mem[:] = pts
     #     return poly
@@ -1839,8 +1840,8 @@ class GLPixelGridOverlay(GraphicsObject):
         self.upload_data()
         
         # Suppose you have self.num_lines = N
-        # So self.vertex_data.shape = (2*N, 2)
-        # Create color array shape (2*N, 4), all white
+        # So self.vertex_data.shape = (2*E, 2)
+        # Create color array shape (2*E, 4), all white
         self.num_lines = self.vertex_data.shape[0] // 2
         self.color_data = np.zeros((2*self.num_lines, 4), dtype=np.float32)
         self.base_alpha = np.ones_like(self.color_data[:, 3])  # all 1.0 initially
@@ -2058,3 +2059,74 @@ class GLPixelGridOverlay(GraphicsObject):
     def shape(self):
         """No mouse picking; return empty path."""
         return pg.QtGui.QPainterPath()
+    
+    def _generate_grid_lines_8(self):
+        """Generate vertex data for the grid lines using GL_LINES."""
+        vertices = []
+        
+        # Initialize default values for when parent attributes aren't ready yet
+        if not hasattr(self.parent, 'inds') or not self.parent.inds:
+            # Set default values that will work until proper initialization
+            idx = 0
+            # Use Nx and Ny instead of non-existent height and width
+            Sy = self.Ny
+            Sx = self.Nx
+            self.lineIndices = {}
+            # Return empty numpy array with correct shape and dtype
+            return np.zeros((0, 2), dtype=np.float32)
+            
+        # Original code continues when attributes exist
+        idx = self.parent.inds[0][0]  
+        neighbor_offsets = self.parent.steps[:idx]
+        print("Using offsets:", neighbor_offsets)
+        
+        coords = []
+        # lineIndices[j, i, d] -> which line index is used for pixel (i,j) and direction d
+        ndirs = len(neighbor_offsets)
+        lineIndices = np.full((self.Ny, self.Nx, ndirs), -1, dtype=int)
+
+        line_index = 0
+        
+        for j in range(self.Ny):
+            for i in range(self.Nx):
+                # center of pixel (i,j)
+                cx = i + 0.5
+                cy = j + 0.5
+
+                # loop over each direction
+                for d, (dy, dx) in enumerate(neighbor_offsets):
+                    ni = i + dx
+                    nj = j + dy
+
+                    # is neighbor in bounds?
+                    if (0 <= ni < self.Nx) and (0 <= nj < self.Ny):
+                        nx = ni + 0.5
+                        ny = nj + 0.5
+
+                        # We add two consecutive vertices => one line in the final buffer
+                        coords.append([cx, cy])
+                        coords.append([nx, ny])
+
+                        # record line index in lineIndices array
+                        lineIndices[j, i, d] = line_index
+                        line_index += 1
+
+        # Convert coords to float32 array
+        coords = np.array(coords, dtype=np.float32)
+        print("Total lines:", line_index, "vertex_data shape:", coords.shape)
+
+        # Store lineIndices for future lookups
+        self.lineIndices = lineIndices
+        self.num_lines = line_index
+
+        return coords
+    
+    def hide_lines_batch(self, indices, visible=False):
+        if not hasattr(self.parent, 'inds') or not self.parent.inds:
+            return
+        # ...existing code...
+            
+    def show_lines_batch(self, indices, visible=True):
+        if not hasattr(self.parent, 'inds') or not self.parent.inds:
+            return
+        # ...existing code...

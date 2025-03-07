@@ -1945,3 +1945,43 @@ class SizeModel():
         np.save(self.pretrained_size, self.params)
         models_logger.info('model saved to '+self.pretrained_size)
         return self.params
+
+def initialize_model(self):
+    self.get_model_path()
+
+    # Check GPU again to be safe
+    from omnipose.gpu import is_cuda_available, is_mps_available
+    
+    # Only enable GPU if it's actually available
+    use_gpu = self.useGPU.isChecked() and (is_cuda_available() or is_mps_available())
+
+    if self.current_model in models.MODEL_NAMES:
+        # make sure -channel models are initialized correctly
+        if self.current_model in models.C2_MODEL_NAMES:
+            self.nchan = 2
+            self.ChanNumber.setText(str(self.nchan))
+
+        # ensure that the boundary/nclasses is set correctly
+        self.boundary.setChecked(self.current_model in models.BD_MODEL_NAMES)
+        self.nclasses = 2 + self.boundary.isChecked()
+
+        logger.info(f'Initializing model: nchan set to {self.nchan}, nclasses set to {self.nclasses}, dim set to {self.dim}')        
+
+        self.model = models.CellposeModel(gpu=use_gpu,
+                                        use_torch=self.torch,
+                                        model_type=self.current_model,                                             
+                                        nchan=self.nchan,
+                                        nclasses=self.nclasses)
+        
+        omni_model = 'omni' in self.current_model
+        bacterial = 'bact' in self.current_model
+        if omni_model or bacterial:
+            self.NetAvg.setCurrentIndex(1) #one run net
+            
+    else:
+        self.nclasses = 2 + self.boundary.isChecked()
+        self.model = models.CellposeModel(gpu=use_gpu, 
+                                        use_torch=True,
+                                        pretrained_model=self.current_model_path,                                             
+                                        nchan=self.nchan,
+                                        nclasses=self.nclasses)

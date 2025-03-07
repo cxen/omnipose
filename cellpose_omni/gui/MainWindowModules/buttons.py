@@ -1,5 +1,5 @@
 
-from PyQt6 import QtGui, QtCore, QtWidgets
+from PySide6 import QtGui, QtCore, QtWidgets
 
 from ..guiparts import TOOLBAR_WIDTH, SPACING, WIDTH_0, TextField
 
@@ -7,10 +7,10 @@ INPUT_WIDTH = 2*WIDTH_0 + SPACING
 WIDTH_3 = 3*WIDTH_0+2*SPACING
 WIDTH_5 = 5*WIDTH_0+4*SPACING
 
-from PyQt6 import QtGui, QtCore, QtWidgets
-from PyQt6.QtCore import Qt, pyqtSlot, QCoreApplication
-from PyQt6.QtWidgets import QMainWindow, QApplication, QWidget, QScrollBar, QComboBox, QGridLayout, QPushButton, QCheckBox, QLabel, QProgressBar, QLineEdit, QScrollArea
-from PyQt6.QtGui import QPalette
+from PySide6 import QtGui, QtCore, QtWidgets
+from PySide6.QtCore import Qt, Slot, QCoreApplication
+from PySide6.QtWidgets import QMainWindow, QApplication, QWidget, QScrollBar, QComboBox, QGridLayout, QPushButton, QCheckBox, QLabel, QProgressBar, QLineEdit, QScrollArea
+from PySide6.QtGui import QPalette
 import pyqtgraph as pg
 
 import superqt

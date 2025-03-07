@@ -41,20 +41,26 @@ install_deps = ['numpy',
                 'aicsimageio',
                 'mgen',
                 'dbscan',
-                'networkit'
+                'networkit',
+                'torchvf'
                 ]
 
 # Define gui_deps directly, as imported by other modules
-gui_deps = ['PySide6>=6.5.0',  # Using PySide6 instead of PyQt6
-            'pyqtgraph>=0.12.4',
+gui_deps = ['PySide6',  # Using PySide6 instead of PyQt6
+            'pyqtgraph',
             'qtpy',
-            'superqt']
+            'superqt',
+            'qtawesome',
+            'pyopengl',
+            'darkdetect',
+            'pyqtdarktheme',
+            'cmap']
 
 # Define distributed_deps, as imported by other modules
 distributed_deps = ['dask', 'distributed']
 
 # Define doc_deps for completeness
-doc_deps = ['sphinx>=3.0',
+doc_deps = ['sphinx',
             'sphinx_rtd_theme',
             'matplotlib',
             'sphinx-gallery',

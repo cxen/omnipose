@@ -61,18 +61,57 @@ def parse_model_string(pretrained_model):
     concatenation = ostrs[2]=='on'
     return residual_on, style_on, concatenation
 
-def assign_device(gpu=True, gpu_number=None):
-    device, gpu_available = use_gpu(gpu_number)
-    if gpu and gpu_available:
-        core_logger.info('Using GPU.')
-    elif gpu and not gpu_available:
-        core_logger.info('No GPU available or pytorch not configured, using CPU.')
-        device = torch_CPU
-    else:
-        core_logger.info('Using CPU.')
-        device = torch_CPU
-    return device, gpu_available
+def assign_device(gpu_number=0):
+    """
+    Assign device to use for model - GPU if available and user specified, otherwise CPU
     
+    Parameters
+    ----------
+    gpu_number: int (optional, default 0)
+        which GPU to use (if more than one)
+        
+    Returns
+    -------
+    device : torch device
+        device used for training model
+    gpu_available : bool
+        whether or not GPU is available
+    """
+    import torch
+    
+    try:
+        # Use the updated GPU detection functions
+        from omnipose.gpu import is_cuda_available, is_mps_available, use_gpu
+        
+        # Handle legacy behavior where use_gpu returns just a boolean
+        result = use_gpu(gpu_number)
+        
+        # Check what was returned - if it's a tuple, unpack it normally
+        if isinstance(result, tuple) and len(result) == 2:
+            device, gpu_available = result
+        else:
+            # If use_gpu only returned a boolean indicating availability
+            gpu_available = bool(result)
+            # Make sure we're using an integer for gpu_number, not a boolean
+            if isinstance(gpu_number, bool):
+                gpu_number = 0
+                
+            # Check for available GPU types
+            if gpu_available:
+                if is_cuda_available():
+                    device = torch.device(f'cuda:{gpu_number}')
+                elif is_mps_available():
+                    device = torch.device('mps')
+                else:
+                    device = torch.device('cpu')
+                    gpu_available = False
+            else:
+                device = torch.device('cpu')
+            
+        return device, gpu_available
+    except Exception as e:
+        print(f"Error assigning device: {e}")
+        return torch.device('cpu'), False
 
 def check_mkl(use_torch=True):
     #core_logger.info('Running test snippet to check if MKL-DNN working')
@@ -169,7 +208,8 @@ class UnetModel():
                               dropout=self.dropout,
                               kernel_size=self.kernel_size, 
                               scale_factor=self.scale_factor, 
-                              dilation=self.dilation).to(self.device)
+                              dilation=self.dilation,
+                              device=self.device).to(self.device)
             core_logger.info(f'u-net config: {self.nbase, self.nclasses, self.dim}')
         else:
             self.net = resnet_style.CPnet(self.nbase, nout=self.nclasses,

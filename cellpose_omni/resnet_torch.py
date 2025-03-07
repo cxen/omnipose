@@ -1,4 +1,3 @@
-
 import numpy as np
 import torch
 import torch.nn as nn
@@ -275,8 +274,13 @@ class make_style(nn.Module):
 class CPnet(nn.Module):
     def __init__(self, nbase, nout, sz, residual_on=True, 
                  style_on=True, concatenation=False, mkldnn=False, dim=2, 
-                 checkpoint=False, dropout=False, kernel_size=2, scale_factor=2, dilation=1):
+                 checkpoint=False, dropout=False, kernel_size=2, scale_factor=2, dilation=1, device=None):
         super(CPnet, self).__init__()
+        
+        # Use cuda:0 as default device if GPU is available and no device specified
+        if device is None:
+            device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+        self.device = device
         
         self.checkpoint = checkpoint # master switch 
         self.kernel_size = kernel_size # for maxpool
@@ -318,35 +322,63 @@ class CPnet(nn.Module):
     
     # @autocast() #significant decrease in GPU memory usage (e.g. 19.8GB vs 11.8GB for a particular test run)
     def forward(self, data):
+        # Ensure the input data is on the same device as the model
+        if data.device != self.device:
+            try:
+                data = data.to(self.device)
+            except RuntimeError as e:
+                print(f"Error moving data to device {self.device}: {e}")
+                # Fallback to CPU if GPU fails
+                if self.device.type == 'cuda' or self.device.type == 'mps':
+                    self.device = torch.device('cpu')
+                    self.to(self.device)
+                    data = data.to(self.device)
+        
         if self.mkldnn:
-            data = data.to_mkldnn()
+            try:
+                data = data.to_mkldnn()
+            except Exception as e:
+                print(f"MKLDNN error: {e}, continuing without MKLDNN")
+                self.mkldnn = False
+                
         T0 = self.downsample(data)
-        # T0 = cp.checkpoint(self.downsample,data) #casues a warning but appears to work, 11 to 8 GB! 
         
         if self.mkldnn:
             style = self.make_style(T0[-1].to_dense()) 
         else:
             style = self.make_style(T0[-1])
-            style = cp.checkpoint(self.make_style,T0[-1]) if self.checkpoint else self.make_style(T0[-1])
+            if self.checkpoint:
+                try:
+                    style = cp.checkpoint(self.make_style, T0[-1])
+                except Exception as e:
+                    print(f"Checkpoint error: {e}, continuing without checkpoint")
+                    style = self.make_style(T0[-1])
+            else:
+                style = self.make_style(T0[-1])
             
         style0 = style
         if not self.style_on:
             style = style * 0
         
         T0 = self.upsample(style, T0, self.mkldnn)
-        # T0 = cp.checkpoint(self.upsample, style, T0, self.mkldnn) #not working
         
         if self.do_dropout:
             T0 = self.dropout(T0)
 
-        # T0 = self.output(T0)
-        T0 = cp.checkpoint(self.output,T0) if self.checkpoint else self.output(T0) #only  small reduction, 300MB
+        if self.checkpoint:
+            try:
+                T0 = cp.checkpoint(self.output, T0)
+            except Exception as e:
+                print(f"Checkpoint error: {e}, continuing without checkpoint")
+                T0 = self.output(T0)
+        else:
+            T0 = self.output(T0)
         
         if self.mkldnn:
-            T0 = T0.to_dense()    
-
-
-        # cellpose now uses a T1 as well, not sure why to return what is before the upscaling 
+            try:
+                T0 = T0.to_dense()
+            except Exception as e:
+                print(f"MKLDNN error during conversion to dense: {e}")
         
         return T0, style0
 
@@ -356,53 +388,42 @@ class CPnet(nn.Module):
         
     def load_model(self, filename, cpu=False):
         if not cpu:
-            self.load_state_dict(torch.load(filename,
-                                            map_location=torch_GPU,
-                                            weights_only=True))
-            
-
-            # checkpoint = torch.load(filename, map_location=torch_GPU,  weights_only=False)
-
-            # # Extract the state dictionary
-            # if 'state_dict' in checkpoint:
-            #     state_dict = checkpoint['state_dict']
-            # else:
-            #     state_dict = checkpoint
+            # Get the appropriate device
+            if self.device is None:
+                self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
                 
-            # # Load the state dictionary into the model
-            # try:
-            #     self.load_state_dict(state_dict, strict=False)
-            # except Exception as e:
-            #     print('Failed to load model:', e)
-            
-        else:
-            self.__init__(self.nbase,
-                          self.nout,
-                          self.sz,
-                          self.residual_on,
-                          self.style_on,
-                          self.concatenation,
-                          self.mkldnn,
-                          self.dim,
-                          self.checkpoint,
-                          self.do_dropout,
-                          self.kernel_size, self.scale_factor, self.dilation)
-            state_dict = torch.load(filename, map_location=torch_CPU, weights_only=True)
-            # print('ggg',state_dict)
             try:
-#                 from collections import OrderedDict
-#                 new_state_dict = OrderedDict()
-
-#                 for k, v in state_dict.items():
-#                     if 'module' not in k:
-#                         k = 'module.'+k
-#                     else:
-#                         k = k.replace('features.module.', 'module.features.')
-#                     new_state_dict[k]=v
-
-#                 self.load_state_dict(new_state_dict, strict=False)
+                state_dict = torch.load(filename, map_location=self.device, weights_only=True)
+                self.load_state_dict(state_dict)
+            except Exception as e:
+                print(f"Error loading model to {self.device}: {e}")
+                # Fallback to CPU if GPU fails
+                cpu = True
+        
+        if cpu:
+            try:
+                self.__init__(self.nbase,
+                              self.nout,
+                              self.sz,
+                              self.residual_on,
+                              self.style_on,
+                              self.concatenation,
+                              self.mkldnn,
+                              self.dim,
+                              self.checkpoint,
+                              self.do_dropout,
+                              self.kernel_size, self.scale_factor, self.dilation,
+                              device=torch.device('cpu'))
+                state_dict = torch.load(filename, map_location=torch_CPU, weights_only=True)
                 self.load_state_dict(state_dict, strict=False)
             except Exception as e:
-                print('failed to load model', e)
+                print(f'Failed to load model: {e}')
+
+    # Make sure the model is correctly moved to device when DataParallel is used
+    def to(self, *args, **kwargs):
+        device = args[0] if args else kwargs.get('device')
+        if device is not None:
+            self.device = device
+        return super(CPnet, self).to(*args, **kwargs)
 
 

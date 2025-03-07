@@ -32,27 +32,30 @@ import importlib
 import inspect
 
 import pyqtgraph as pg
-pg.setConfigOptions(useOpenGL=True)
+try:
+    pg.setConfigOptions(useOpenGL=True)
+except Exception as e:
+    print(f"Could not set OpenGL option: {e}")
 
 os.environ['QT_AUTO_SCREEN_SCALE_FACTOR'] = '1'
 
 from scipy.stats import mode
 # from scipy.ndimage import gaussian_filter
 
-# from . import guiparts, menus, io
+# Import GUI components directly
 from cellpose_omni.gui import guiparts, menus, io
-from .. import models, dynamics
-from ..utils import download_url_to_file, masks_to_outlines, diameters 
-from ..io import get_image_files, imsave, imread, check_dir #OMNI_INSTALLED
-from ..transforms import resize_image #fixed import
-from ..plot import disk
+from cellpose_omni import models, dynamics
+from cellpose_omni.utils import download_url_to_file, masks_to_outlines, diameters 
+from cellpose_omni.io import get_image_files, imsave, imread, check_dir #OMNI_INSTALLED
+from cellpose_omni.transforms import resize_image #fixed import
+from cellpose_omni.plot import disk
 from omnipose.utils import normalize99, to_8_bit
 
 
 OMNI_INSTALLED = 1
-from .guiutils import checkstyle, get_unique_points, avg3d, interpZ
+from cellpose_omni.gui.guiutils import checkstyle, get_unique_points, avg3d, interpZ
 
-from . import logger
+from cellpose_omni.gui import logger
 
 
 ALLOWED_THEMES = ['light','dark']
@@ -67,16 +70,16 @@ import qtawesome as qta
 # no more matplotlib just for colormaps
 from cmap import Colormap
 
-from . import MainWindowModules as submodules
+from cellpose_omni.gui import MainWindowModules as submodules
 
-from . import PRELOAD_IMAGE, ICON_PATH
+from cellpose_omni.gui import PRELOAD_IMAGE, ICON_PATH
 
 import omnipose, cellpose_omni
 
 import importlib
 import types
 
-from ...omnipose.gpu import is_cuda_available, is_mps_available
+from omnipose.gpu import is_cuda_available, is_mps_available
 
 
 def run(image=PRELOAD_IMAGE):
@@ -141,10 +144,43 @@ def run(image=PRELOAD_IMAGE):
     
 
 class MainW(QMainWindow):
-    def __init__(self, size, dpi, pxr, clipboard, image=None):
+    def __init__(self, size=None, dpi=None, pxr=None, clipboard=None, image=None):
         start_time = time.time()  # Record start time
 
         super(MainW, self).__init__()
+        
+        # Initialize QApplication if it doesn't exist
+        # This ensures we can get a clipboard and screen info
+        if QApplication.instance() is None:
+            self.app = QApplication(sys.argv)
+        else:
+            self.app = QApplication.instance()
+        
+        # Auto-detect values if not provided
+        if clipboard is None:
+            clipboard = self.app.clipboard()
+        
+        # Get screen info if not provided
+        if size is None or dpi is None or pxr is None:
+            cursor_pos = QCursor.pos()
+            screen = QGuiApplication.screenAt(cursor_pos)
+            if screen is None:
+                # Fallback to primary screen if cursor isn't on any screen
+                screen = QGuiApplication.primaryScreen()
+            
+            if size is None:
+                size = screen.availableGeometry()
+            if dpi is None:
+                dpi = screen.logicalDotsPerInch()
+            if pxr is None:
+                pxr = screen.devicePixelRatio()
+        
+        # Initialize image dimensions with defaults
+        self.Lx = 512
+        self.Ly = 512
+        self.NZ = 1
+        self.dim = 2  # Default to 2D
+        self.shape = (self.Ly, self.Lx)
         
         # Dict mapping { module_name: last_mtime }
         self.module_mtimes = {}
@@ -173,7 +209,10 @@ class MainW(QMainWindow):
         # print(qdarktheme.load_palette().link().color())
         self.darkmode = str(darkdetect.theme()).lower() in ['none','dark'] # have to initialize; str catches None on some systems
 
-        pg.setConfigOptions(imageAxisOrder="row-major")
+        try:
+            pg.setConfigOptions(imageAxisOrder="row-major")
+        except Exception as e:
+            print(f"Could not set imageAxisOrder option: {e}")
         self.clipboard = clipboard
 
         # self.showMaximized()
@@ -303,140 +342,25 @@ class MainW(QMainWindow):
                 self.modules[mod_name] = new_mod
                 self.module_mtimes[mod_name] = new_mtime
                 self.patch_submodule(new_mod)
-        # Check external modules
-        self.check_external_modules()
-        # Check additional modules
+        # Check additional modules - fixed reference to non-existent method
         self.check_additional_modules()
-        # Now update instance fields
+        # Update instance fields
         self.update_mainw_fields()
         
-    # def update_mainw_fields_old(self):
-    #     """
-    #     For each whitelisted field in the MainW instance (e.g., 'layer'),
-    #     check if the file defining its class has changed. If so, update only
-    #     the methods defined directly in that class (i.e. in its __dict__)
-    #     on the existing instance.
-    #     """
-    #     # Whitelist: only update these fields.
-    #     fields_to_update = ['layer']
+    def mouse_moved(self, pos):
+        """
+        Handle mouse movement events to update cursor highlighting.
+        This is connected to the scene's sigMouseMoved signal.
         
-    #     # for field in fields_to_update:
-    #     for field, instance in self.__dict__.items():
-    #         # print(field)
-    #         instance = getattr(self, field, None)
-    #         if instance is None or not hasattr(instance, '__class__'):
-    #             continue
+        Parameters
+        ----------
+        pos : QtCore.QPointF
+            The position of the mouse cursor in scene coordinates
+        """
+        # Call update_highlight from the cursor module if it exists
+        if hasattr(self, 'update_highlight'):
+            self.update_highlight(pos)
             
-    #         old_cls = instance.__class__
-    #         module_name = old_cls.__module__
-    #         try:
-    #             module = importlib.import_module(module_name)
-    #             mod_file = getattr(module, '__file__', None)
-    #             if mod_file is None or not os.path.exists(mod_file):
-    #                 continue
-    #             # Get the current modification time (rounded to integer seconds)
-    #             new_mtime = self.get_mtime(mod_file)
-    #         except Exception as e:
-    #             print(f"Error checking module time for {field}: {e}")
-    #             continue
-
-    #         # Use the module's full name as the key in self.module_mtimes.
-    #         stored_mtime = self.module_mtimes.get(module_name)
-    #         if stored_mtime is not None and new_mtime == stored_mtime:
-    #             # No change detected – skip update.
-    #             continue
-
-    #         # Update the stored modification time for this module.
-    #         self.module_mtimes[module_name] = new_mtime
-
-    #         try:
-    #             new_cls = getattr(module, old_cls.__name__)
-    #         except Exception as e:
-    #             print(f"Error retrieving new class for {field}: {e}")
-    #             continue
-
-    #         # Only update if the class has actually changed.
-    #         if new_cls is old_cls:
-    #             continue
-
-    #         print(f"Updating instance '{field}' of class {old_cls.__name__}: {id(old_cls)} -> {id(new_cls)}")
-    #         # Loop over methods defined directly in new_cls (in its __dict__)
-    #         for key, new_method in new_cls.__dict__.items():
-    #             if callable(new_method):
-    #                 try:
-    #                     # Bind the new method to the existing instance.
-    #                     bound_method = new_method.__get__(instance, new_cls)
-    #                     setattr(instance, key, bound_method)
-    #                     print(f"  Updated {field}.{key}")
-    #                 except Exception as e:
-    #                     print(f"  Failed to update {field}.{key}: {e}")
-
-    
-    # def update_mainw_fields(self):
-    #     """
-    #     Updates methods on instance fields whose classes are explicitly defined in allowed modules.
-    #     Groups fields by module and checks the module file’s modification time only once.
-    #     Only methods defined directly in the class (__dict__) are updated.
-    #     """
-    #     # Only update fields whose class is defined in these allowed modules.
-    #     allowed_mods = ("cellpose_omni.gui.guiparts",)
-        
-    #     # Group fields by module name.
-    #     fields_by_module = {}
-    #     for field_name, instance in self.__dict__.items():
-    #         if instance is None or not hasattr(instance, '__class__'):
-    #             continue
-    #         cls = instance.__class__
-    #         module_name = cls.__module__
-    #         # Only process if the module is allowed.
-    #         if module_name not in allowed_mods:
-    #             continue
-    #         fields_by_module.setdefault(module_name, []).append((field_name, instance))
-        
-    #     # Process each module group.
-    #     for module_name, field_list in fields_by_module.items():
-    #         try:
-    #             module = importlib.import_module(module_name)
-    #             mod_file = getattr(module, '__file__', None)
-    #             if mod_file is None or not os.path.exists(mod_file):
-    #                 continue
-    #             new_mtime = self.get_mtime(mod_file)
-    #         except Exception as e:
-    #             print(f"Error checking module time for module '{module_name}': {e}")
-    #             continue
-            
-    #         stored_mtime = self.module_mtimes.get(module_name)
-    #         if stored_mtime is not None and new_mtime == stored_mtime:
-    #             # No change detected in this module – skip.
-    #             continue
-            
-    #         # Now, for each field in this module, update its methods.
-    #         for field_name, instance in field_list:
-    #             old_cls = instance.__class__
-    #             try:
-    #                 # Retrieve the updated class from the module.
-    #                 new_cls = getattr(module, old_cls.__name__)
-    #             except Exception as e:
-    #                 print(f"Error retrieving new class for field '{field_name}': {e}")
-    #                 continue
-                
-    #             if new_cls is old_cls:
-    #                 continue  # The class hasn't changed.
-                
-    #             print(f"Updating instance '{field_name}' of class {old_cls.__name__}: {id(old_cls)} -> {id(new_cls)}")
-    #             # Loop over methods defined directly in new_cls (from its __dict__).
-    #             for key, new_method in new_cls.__dict__.items():
-    #                 if callable(new_method):
-    #                     try:
-    #                         bound_method = new_method.__get__(instance, new_cls)
-    #                         setattr(instance, key, bound_method)
-    #                         print(f"  Updated {field_name}.{key}")
-    #                     except Exception as e:
-    #                         print(f"  Failed to update {field_name}.{key}: {e}")
-            
-    #         # After processing all fields from this module, update the stored modification time.
-    #         self.module_mtimes[module_name] = new_mtime
-          
     def update_mainw_fields(self):
         """
         Update methods on instance fields whose classes (from allowed modules)
@@ -641,7 +565,7 @@ class MainW(QMainWindow):
         """
         Recursively reloads a module (and any submodules whose names start with module.__name__)
         and then updates the __class__ pointer for all existing instances of classes defined in that module.
-        This mimics the behavior of IPython’s %autoreload 2.
+        This mimics the behavior of IPython's %autoreload 2.
         """
         if visited is None:
             visited = set()
@@ -651,38 +575,16 @@ class MainW(QMainWindow):
         for attr_name in dir(module):
             try:
                 attr = getattr(module, attr_name)
-            except Exception:
+                if isinstance(attr, types.ModuleType) and attr.__name__.startswith(module.__name__):
+                    self.recursive_reload_and_update(attr, visited)
+            except Exception as e:
+                print(f"Failed to recursively reload attribute {attr_name}: {e}")
                 continue
-            if isinstance(attr, types.ModuleType) and attr.__name__.startswith(module.__name__):
-                self.recursive_reload_and_update(attr, visited)
         old_module = module
         new_module = importlib.reload(module)
         self.update_class_methods(old_module, new_module)
         return new_module
 
-
-    # --- In your timerEvent, when reloading an external module, use the recursive reload helper ---
-    def check_external_modules(self):
-        """
-        Checks each registered external module (or package) for changes.
-        If a change is detected, recursively reload the module and update
-        all its instances.
-        """
-        for mod_name, info in self.external_submodules.items():
-            mod = info["module"]
-            mod_file = getattr(mod, '__file__', None)
-            if not mod_file or not os.path.exists(mod_file):
-                continue
-            new_mtime = self.get_mtime(mod_file)
-            if new_mtime > info["mtime"]:
-                print(f"🔄 Recursively reloading external module: {mod_name}")
-                try:
-                    new_mod = self.recursive_reload_and_update(mod)
-                    self.external_submodules[mod_name]["module"] = new_mod
-                    self.external_submodules[mod_name]["mtime"] = new_mtime
-                except Exception as e:
-                    print(f"Failed to recursively reload module {mod_name}: {e}")
- 
     def update_class_methods(self, old_module, new_module):
         """
         For every class defined in new_module that also existed in old_module,
@@ -703,51 +605,26 @@ class MainW(QMainWindow):
                             setattr(old_obj, key, new_method)
                             print(f"Updated {name}.{key}")
                             
+    # Add a run method to use existing QApplication
+    def run(self):
+        """
+        Run the GUI without creating a new QApplication.
+        This is meant to be called after creating a MainW instance
+        when a QApplication already exists.
+        """
+        self.show()
+        if QApplication.instance() is not None:
+            return QApplication.instance().exec()
+        else:
+            print("Error: No QApplication instance found")
+            return 1
                             
 # prevents gui from running under import 
 if __name__ == "__main__":
     run()
-        
 
-
-
-    # def dragEnterEvent(self, event):
-    #     if event.mimeData().hasUrls():
-    #         event.accept()
-    #     else:
-    #         event.ignore()
-
-    
-    # Looks like CP2 might not do net averaging in the GUI, also defaults to torch
-    # The CP2 version breaks omnipose, something to do with those extra if/else that
-    # correspond to extra cases that the models() function already takes case of 
-    
-#     def get_model_path(self):
-#         self.current_model = self.ModelChoose.currentText()
-#         self.current_model_path = os.fspath(models.MODEL_DIR.joinpath(self.current_model))
-        
-#     def initialize_model(self, model_name=None):
-#         if model_name is None or not isinstance(model_name, str):
-#             self.get_model_path()
-#             self.model = models.CellposeModel(gpu=self.useGPU.isChecked(), 
-#                                               pretrained_model=self.current_model_path)
-#         else:
-#             self.current_model = model_name
-#             if 'cyto' in self.current_model or 'nuclei' in self.current_model:
-#                 self.current_model_path = models.model_path(self.current_model, 0)
-#             else:
-#                 self.current_model_path = os.fspath(models.MODEL_DIR.joinpath(self.current_model))
-#             if self.current_model=='cyto':
-#                 self.model = models.Cellpose(gpu=self.useGPU.isChecked(), 
-#                                              model_type=self.current_model)
-#             else:
-#                 self.model = models.CellposeModel(gpu=self.useGPU.isChecked(), 
-#                                                   model_type=self.current_model)
-
-    # this is where we need to change init depending on whether or not we have a size model
-    # or which size model to use... 
-    # this should really be updated to allow for custom size models to be used, too
-    # I guess most doing that will not be using the GUI, but still an important feature
+# Export MainW as GUI for proper importing by other modules
+GUI = MainW
 
 
 
