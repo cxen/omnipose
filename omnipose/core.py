@@ -65,7 +65,7 @@ from dbscan import DBSCAN as new_DBSCAN
 import gc
 
 try:
-    from hdbscan import HDBSCAN
+    from sklearn.cluster import HDBSCAN
     HDBSCAN_ENABLED = True
 
 except:
@@ -821,7 +821,7 @@ def links_to_boundary(masks,links):
     piece_masks = masks_padded[tuple(neighbors)] #extract list of label values, 
     is_link = np.zeros(piece_masks.shape, dtype=np.bool_)
     is_link = get_link_matrix(links, piece_masks, np.concatenate(inds), idx, is_link)
-    
+
     border_mask = np.pad(np.zeros(masks.shape,dtype=bool),pad,constant_values=1)
     isborder = border_mask[tuple(neighbors)] #extract list of border values
     
@@ -3252,17 +3252,12 @@ def ensure_torch(*arrays, device=None, dtype=torch.float32):
     )
 
 def _get_affinity_torch(initial, final, flow, dist, iscell, steps, fact, inds, supporting_inds, niter,  euler_offset=None,
-                        device=torch_GPU,
-                        # angle_cutoff=np.pi/2):
-                        # angle_cutoff=np.pi/2):
-                        # angle_cutoff=np.pi/1.5):
-
+                        device=None,
                         angle_cutoff=np.pi/3):
-
-                        # angle_cutoff=np.pi/10):
-
-                        # angle_cutoff=np.pi/4):
     # print('using torch affinity - not equivalent YET, displacement vs flow field')
+    if device is None:
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    
     initial, final, flow, dist, iscell = ensure_torch(initial, final, flow, dist, iscell, device=device)
     # compute the displacment vector field; repalcingflow with this does not seem to make a difference now
     # which means we could possibly forgo euler integration altogether 
@@ -3855,11 +3850,9 @@ def affinity_to_edges(affinity_graph,neigh_inds,step_inds,px_inds):
     for s in step_inds:
         for p in px_inds:
             if p <= neigh_inds[s][p] and affinity_graph[s,p]:  # upper triangular 
-                edge_list[idx] = (p,neigh_inds[s][p])
+                edge_list[idx] = (p,neigh_inds[s,p])
                 idx += 1
     return edge_list[:idx] # return only the portion edge_list that contins edges 
-
-
 
 from scipy.sparse import coo_matrix
 from networkit import GraphFromCoo
@@ -3895,57 +3888,33 @@ def affinity_to_masks(affinity_graph,neigh_inds,iscell, coords,
         step_inds = np.arange(nstep)
         
     edge_list = affinity_to_edges(affinity_graph,neigh_inds,step_inds,px_inds)
-    # print(edge_list[0].shape,edge_list[1].shape)
+    
     # Create a Networkit graph from the edge list
     g = nk.graph.Graph(n=npix, weighted=False)
-    # edge_list = (np.array(edge_list[:,0]), np.array(edge_list[:,1]))
-    # g.addEdges(edge_list)
     
-    u = np.ascontiguousarray(edge_list[:, 0], dtype=np.uint64)
-    v = np.ascontiguousarray(edge_list[:, 1], dtype=np.uint64)
-    g.addEdges((u, v))
-
-
-
-    # # Assume edge_list is a 2D NumPy array with shape (num_edges, 2)
-    # num_edges, _ = edge_list.shape
-    # # For an unweighted graph, assign a constant weight (e.g., 1.0) for each edge.
-    # data = np.ones(num_edges, dtype=np.float64)
-    # # Create a COO matrix from the edge list. Ensure the shape matches your total number of nodes.
-    # coo = coo_matrix((data, (edge_list[:, 0], edge_list[:, 1])), shape=(npix, npix))
-    # nk.setNumberOfThreads(4)  # e.g. on a 16-core system
-
-    # # Create a graph and add edges in one go.
-    # # g = nk.Graph(n=npix, weighted=False, directed=False)
-    # # g.addEdges(coo)
-    # g = GraphFromCoo(coo, weighted=False, directed=False)
-
-
+    # FIX: Instead of trying to add all edges at once with potentially incompatible NumPy types,
+    # add them one by one to avoid the np.ulong issue
+    for edge in edge_list:
+        g.addEdge(int(edge[0]), int(edge[1]))
+    
     # Find the connected components
     cc = nk.components.ConnectedComponents(g).run()
     components = cc.getComponents()
-
     labels = np.zeros(iscell.shape,dtype=int)
-    # for i,nodes in enumerate(components):
-    #      labels[tuple([c[nodes] for c in coords])] = i+1 if len(nodes)>1 else 0
+
     comp_id = np.zeros(npix, dtype=np.int32)
     for i, nodes in enumerate(components):
         # Skip singletons or give them label 0
         if len(nodes) > 1:
             comp_id[nodes] = i + 1
 
-    # 'coords' is shape (dim, npix); 
-    # 'labels' is your ND array; 
-    # we do one vectorized assignment:
     labels[tuple(coords)] = comp_id
-
     if exclude_interior:
         labels = ncolor.expand_labels(labels)*iscell
     
     coords = np.stack(coords).T
     gone = neigh_inds[(3**dim)//2,csum<dim]
     labels[tuple(coords[gone].T)] = 0 
-
     if verbose:
         executionTime = (time.time() - startTime)
         omnipose_logger.info('affinity_to_masks(cardinal={}) execution time: {:.3g} sec'.format(cardinal,executionTime))
@@ -3954,8 +3923,7 @@ def affinity_to_masks(affinity_graph,neigh_inds,iscell, coords,
         return labels, edge_list, coords, px_inds
     else:
         return labels
-        
-        
+              
 import numpy as np
 
 class UnionFind:
@@ -4056,7 +4024,6 @@ def affinity_to_masks2(affinity_graph,neigh_inds,iscell, coords,
     labels[tuple(coords_t[gone].T)] = 0
 
     return labels
-
 
 def boundary_to_affinity(masks,boundaries):
     """
@@ -4311,4 +4278,3 @@ def split_spacetime(augmented_affinity,mask,verbose=False):
 
     
     return lbl, logs
-

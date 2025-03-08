@@ -3,6 +3,7 @@ from omnipose import core, gpu, misc
 from .. import logger  # Imports logger from __init__.py in parent
 from .. import io
 
+import os
 import time
 
 from PySide6.QtWidgets import QApplication # could do all in init then import * in these 
