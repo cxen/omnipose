@@ -176,9 +176,9 @@ def show_segmentation(fig, img, maski, flowi, bdi=None, channels=None, file_name
 
     if file_name is not None:
         save_path = os.path.splitext(file_name)[0]
-        io.imsave(save_path + '_overlay.jpg', overlay)
-        io.imsave(save_path + '_outlines.jpg', imgout)
-        io.imsave(save_path + '_flows.jpg', flowi)
+        io.imwrite(save_path + '_overlay.jpg', overlay)
+        io.imwrite(save_path + '_outlines.jpg', imgout)
+        io.imwrite(save_path + '_flows.jpg', flowi)
         
         
     if display:

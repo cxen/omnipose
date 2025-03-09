@@ -111,6 +111,8 @@ SKIMAGE_ENABLED = True
 
 from scipy.ndimage import convolve, mean
 
+from .memory import force_cleanup, safe_process_batch, batch_limiter
+import gc
 
 # ## Section I: core utilities
 
@@ -1666,7 +1668,28 @@ def compute_masks(dP, dist, affinity_graph=None, bd=None, p=None, coords=None, i
         else:
             omnipose_logger.info('\tno objects found')
 
-    return (*ret,)
+    try:
+        # Main mask computation logic
+        # ...existing code...
+        
+        # Add explicit cleanup within the function at critical points
+        if pad:
+            force_cleanup(verbose=False)
+        
+        # ...existing code...
+        
+        # Add cleanup before returning
+        if use_gpu:
+            force_cleanup(verbose=False)
+        
+        return ret
+        
+    except Exception as e:
+        # Add error handling with cleanup
+        omnipose_logger.error(f"Error in compute_masks: {str(e)}")
+        if use_gpu:
+            force_cleanup(verbose=True)
+        raise
 
 
 # Omnipose requires (a) a special suppressed Euler step and (b) a special mask reconstruction algorithm. 
@@ -2257,8 +2280,8 @@ def random_rotate_and_resize(X, Y=None, scale_range=1., gamma_range=[.75,2.5], t
         img = X[n].copy()
         y = None if Y is None else Y[n]
         # use recursive function here to pass back single image that was cropped appropriately 
-        # skimage.io.imsave('/home/kcutler/DataDrive/debug/img_orig.png',img[0])
-        # skimage.io.imsave('/home/kcutler/DataDrive/debug/label_orig.tiff',y[n]) #so at this point the bad label is just fine 
+        # io.imwrite('/home/kcutler/DataDrive/debug/img_orig.png',img[0])
+        # io.imwrite('/home/kcutler/DataDrive/debug/label_orig.tiff',y[n]) #so at this point the bad label is just fine 
         imgi[n], lbl[n], scale[n] = random_crop_warp(img, y, tyx, v1, v2, nchan,
                                                      1 if rescale is None else rescale[n], 
                                                      scale_range, gamma_range, do_flip, 
@@ -2325,7 +2348,7 @@ def random_crop_warp(img, Y, tyx, v1, v2, nchan, rescale, scale_range, gamma_ran
         tyx is: {}. 
         rescale is {}""".format(ind,img.shape,tyx,rescale)
         omnipose_logger.critical(error_message)
-        # skimage.io.imsave('/home/kcutler/DataDrive/debug/img'+str(depth)+'.png',img[0]) 
+        # io.imwrite('/home/kcutler/DataDrive/debug/img'+str(depth)+'.png',img[0]) 
         raise ValueError(error_message)
     
     if depth>200:
@@ -2420,8 +2443,8 @@ def random_crop_warp(img, Y, tyx, v1, v2, nchan, rescale, scale_range, gamma_ran
             # cutoff = (numpx/10**(dim+1)) # .1 percent of pixels must be cells
             # if cellpx<cutoff:# or cellpx==numpx: # had to disable the overdense feature for cyto2
             #                 # may not actually be a problem now anyway
-            #     # skimage.io.imsave('/home/kcutler/DataDrive/debug/img'+str(depth)+'.png',img[0])
-            #     # skimage.io.imsave('/home/kcutler/DataDrive/debug/training'+str(depth)+'.png',lbl[0])
+            #     # io.imwrite('/home/kcutler/DataDrive/debug/img'+str(depth)+'.png',img[0])
+            #     # io.imwrite('/home/kcutler/DataDrive/debug/training'+str(depth)+'.png',lbl[0])
             #     return random_crop_warp(img, Y, tyx, v1, v2, nchan, rescale, scale_range, 
             #                             gamma_range, do_flip, ind, do_labels, depth=depth+1)
             # else:
@@ -2431,8 +2454,8 @@ def random_crop_warp(img, Y, tyx, v1, v2, nchan, rescale, scale_range, gamma_ran
     # boundary instead - fast way to check is number of unique labels 
     if len(fastremap.unique(lbl))<2:# or cellpx==numpx: # had to disable the overdense feature for cyto2
                     # may not actually be a problem now anyway
-        # skimage.io.imsave('/home/kcutler/DataDrive/debug/img'+str(depth)+'.png',img[0])
-        # skimage.io.imsave('/home/kcutler/DataDrive/debug/training'+str(depth)+'.png',lbl[0])
+        # io.imwrite('/home/kcutler/DataDrive/debug/img'+str(depth)+'.png',img[0])
+        # io.imwrite('/home/kcutler/DataDrive/debug/training'+str(depth)+'.png',lbl[0])
         return random_crop_warp(img, Y, tyx, v1, v2, nchan, rescale, scale_range, 
                                 gamma_range, do_flip, ind, do_labels, depth=depth+1, augment=augment)
         
@@ -2945,7 +2968,7 @@ def _get_bd(steps, lab_pad, mu_pad, bd_pad):
         cutoff2 = np.pi*(3/4) # was 3/4, changed to 0.9, back to 3/4 
 
     for s in steps:
-        mag_s = np.sqrt(np.sum(s**2,axis=0))
+        mag_s = np.sqrt(np.sum(np.sum(s**2,axis=0)))
 
         if get_bd:
             # First see if the flow is parallel to the flow OPPOSITE the direction of the step 
@@ -3398,7 +3421,7 @@ def _get_affinity_torch(initial, final, flow, dist, iscell, steps, fact, inds, s
                 
                 # print(i, j, f_inds,b_inds)
                     
-                for f,b in zip(f_inds,b_inds):
+                for f,b in zip(f_inds,b):
                     # connectivity in the forward direction at the source pixel
                     # supportive_connectivity.append(torch.logical_and(connectivity[f][source_slc], connectivity[b][target_slc])) 
                     # support.add_(torch.logical_and(connectivity[f][source_slc], connectivity[b][target_slc]))

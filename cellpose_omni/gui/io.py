@@ -4,7 +4,7 @@ import cv2
 import fastremap 
 
 from .. import utils, plot, transforms, models
-from ..io import imread, imsave, outlines_to_text, logger_setup
+from ..io import imread, imwrite, outlines_to_text, logger_setup
 
 logger, log_file = logger_setup()
 
@@ -555,13 +555,13 @@ def _save_png(parent):
     if parent.NZ==1:
         if parent.cellpix[0].max() > 65534:
             logger.info('saving 2D masks to tif (too many masks for PNG)')
-            imsave(base + '_cp_masks.tif', parent.cellpix[0])
+            imwrite(base + '_cp_masks.tif', parent.cellpix[0])
         else:
             logger.info('saving 2D masks to png')
-            imsave(base + '_cp_masks.png', parent.cellpix[0].astype(np.uint16))
+            imwrite(base + '_cp_masks.png', parent.cellpix[0].astype(np.uint16))
     else:
         logger.info('saving 3D masks to tiff')
-        imsave(base + '_cp_masks.tif', parent.cellpix)
+        imwrite(base + '_cp_masks.tif', parent.cellpix)
 
 def _save_outlines(parent):
     filename = parent.filename

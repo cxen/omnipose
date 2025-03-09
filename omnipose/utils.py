@@ -40,6 +40,9 @@ from .gpu import ARM
 import torch
 TORCH_ENABLED = True 
 
+from .memory import batch_limiter, force_cleanup
+import gc
+
 ### This section defines the tiling functions 
 def get_module(x):
     if isinstance(x, (np.ndarray, tuple, int, float, da.Array)) or np.isscalar(x):
@@ -280,6 +283,10 @@ def make_tiles_ND(imgi, bsize=224, augment=False, tile_overlap=0.1,
                 IMG = rescale(IMG)
         else:
             IMG = None
+
+    if return_tiles and IMG is not None:
+        # Force cleanup to prevent memory leaks
+        force_cleanup(verbose=False)
                 
     return IMG, subs, shape, inds
 
@@ -1200,6 +1207,9 @@ def get_neighbors(coords, steps, dim, shape, edges=None, pad=0):
         C = np.broadcast_to(coords[d], X.shape)
         neighbors[d] = np.where(oob, C, X_clipped)
 
+    if len(coords[0]) > 1000000:  # For very large images
+        force_cleanup(verbose=False)
+
     return neighbors
     
 # a tiny bit faster than the above
@@ -1256,6 +1266,9 @@ def get_neighbors(coords, steps, dim, shape, edges=None, pad=0):
             out[oob] = coords[d][oob]  # revert out-of-bounds neighbors
 
             neighbors[d, n] = out  # store in final array
+
+    if len(coords[0]) > 1000000:  # For very large images
+        force_cleanup(verbose=False)
 
     return neighbors
 

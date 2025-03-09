@@ -10,6 +10,9 @@ __version__ = '0.10.0'  # Update with your actual version
 # Set up main logger
 logger = setup_logger('omnipose')
 
+# Import compatibility modules early to ensure patches are applied
+from . import compatibility
+
 # Simple function to launch the GUI
 def launch_gui():
     """
@@ -62,6 +65,8 @@ import warnings
 from numba.core.errors import NumbaPendingDeprecationWarning
 warnings.simplefilter('ignore', category=NumbaPendingDeprecationWarning)
 import pkg_resources
+
+# Apply compatibility patches
 
 __all__ = ['core', 'utils', 'loss', 'plot', 'misc', 'cli', 'data', 'gpu', 'stacks', 'measure']
 

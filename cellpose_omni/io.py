@@ -37,6 +37,8 @@ try:
 except:
     SERVER_UPLOAD = False
 
+from omnipose.memory import force_cleanup
+
 io_logger = logging.getLogger(__name__)
 
 def logger_setup(verbose=False):
@@ -514,171 +516,220 @@ def save_to_png(images, masks, flows, file_names):
     save_masks(images, masks, flows, file_names, png=True)
 
 # Now saves flows, masks, etc. to separate folders.
-def save_masks(images, masks, flows, file_names, png=True, tif=False,
-               suffix='',save_flows=False, save_outlines=False, outline_col=[1,0,0],
-               save_ncolor=False, dir_above=False, in_folders=False, savedir=None, 
-               save_txt=True, save_plot=True, omni=True, channel_axis=None, channels=None):
-    """ save masks + nicely plotted segmentation image to png and/or tiff
-
-    if png, masks[k] for images[k] are saved to file_names[k]+'_cp_masks.png'
-
-    if tif, masks[k] for images[k] are saved to file_names[k]+'_cp_masks.tif'
-
-    if png and matplotlib installed, full segmentation figure is saved to file_names[k]+'_cp.png'
-
-    only tif option works for 3D data
-    
-    Parameters
-    -------------
-
-    images: (list of) 2D, 3D or 4D arrays
-        images input into cellpose
-
-    masks: (list of) 2D arrays, int
-        masks output from cellpose_omni.eval, where 0=NO masks; 1,2,...=mask labels
-
-    flows: (list of) list of ND arrays 
-        flows output from cellpose_omni.eval
-
-    file_names: (list of) str
-        names of files of images
-        
-    savedir: str
-        absolute path where images will be saved. Default is none (saves to image directory)
-    
-    save_flows, save_outlines, save_ncolor, save_txt: bool
-        Can choose which outputs/views to save.
-        ncolor is a 4 (or 5, if 4 takes too long) index version of the labels that
-        is way easier to visualize than having hundreds of unique colors that may
-        be similar and touch. Any color map can be applied to it (0,1,2,3,4,...).
-    
-    """
-    if isinstance(masks, list):
-        for image, mask, flow, file_name in zip(images, masks, flows, file_names):
-            save_masks(image, mask, flow, file_name, png=png, tif=tif, suffix=suffix, dir_above=dir_above,
-                       save_flows=save_flows,save_outlines=save_outlines, outline_col=outline_col,
-                       save_ncolor=save_ncolor, savedir=savedir, save_txt=save_txt, save_plot=save_plot,
-                       in_folders=in_folders, omni=omni, channel_axis=channel_axis, channels=channels)
+def _save_single_mask(image, mask, flow, file_name, png=True, tif=False,
+                     suffix='', dir_above=None, save_flows=False, save_outlines=False, 
+                     save_ncolor=False, save_txt=True, in_folders=False, savedir=None, 
+                     save_jpeg=False, save_tif8bit=True, save_fol=True, channels=[0,0], 
+                     verbose=False, primariesettings=''):
+    """Save a single mask without recursion"""
+    if mask is None:
+        io_logger.warning(f"Cannot save None mask for {file_name}")
         return
-
-    # make sure there is a leading underscore if any suffix was supplied
-    if len(suffix):
-        if suffix[0]!='_':
-            suffix = '_'+suffix
         
-    if masks.ndim > 2 and not tif:
-        raise ValueError('cannot save 3D outputs as PNG, use tif option instead')
-#     base = os.path.splitext(file_names)[0]
+    # Ensure mask is 2D
+    if mask.ndim != 2:
+        io_logger.warning(f"Mask has unexpected dimensions {mask.shape}, squeezing")
+        mask = mask.squeeze()
+        if mask.ndim != 2:
+            io_logger.warning(f"After squeezing, mask still has {mask.ndim} dimensions")
+            if mask.ndim > 2:
+                # Take first slice or last dimension if it's 1
+                if mask.shape[-1] == 1:
+                    mask = mask[..., 0]
+                else:
+                    mask = mask[0]
     
-    if savedir is None: 
-        if dir_above:
-            savedir = Path(file_names).parent.parent.absolute() #go up a level to save in its own folder
-        else:
-            savedir = Path(file_names).parent.absolute()
+    base = os.path.splitext(file_name)[0]
+    basename = os.path.basename(base)
+    dirname = os.path.dirname(base)
+    if savedir is not None:
+        dirname = savedir
 
-    check_dir(savedir) 
-            
-    basename = os.path.splitext(os.path.basename(file_names))[0]
-    if in_folders:
-        maskdir = os.path.join(savedir,'masks')
-        outlinedir = os.path.join(savedir,'outlines')
-        txtdir = os.path.join(savedir,'txt_outlines')
-        ncolordir = os.path.join(savedir,'ncolor_masks')
-        flowdir = os.path.join(savedir,'flows')
-        cpdir = os.path.join(savedir,'cp_output')
-    else:
-        maskdir = savedir
-        outlinedir = savedir
-        txtdir = savedir
-        ncolordir = savedir
-        flowdir = savedir
-        cpdir = savedir
-    check_dir(maskdir) 
-
-    exts = []
-    if masks.ndim > 2:
-        png = False
-        tif = True
-    if png:    
-        if masks.max() < 2**16:
-            masks = masks.astype(np.uint16) 
-            exts.append('.png')
-        else:
-            png = False 
-            tif = True
-            io_logger.warning('found more than 65535 masks in each image, cannot save PNG, saving as TIF')
+    if in_folders and basename != '':
+        dirname = os.path.join(dirname, basename)
+        basename = ''
     
-    if tif:
-        exts.append('.tif')
-
-    # format_labels will also automatically use lowest bit depth possible
-    if OMNI_INSTALLED:
-        masks = ncolor.format_labels(masks) 
+    if dir_above is not None:
+        if isinstance(dir_above, str):
+            dirname = os.path.join(dir_above, os.path.split(dirname)[1])
+        else:
+            dirname = dir_above
+        
+    # make save directory if it doesn't exist
+    os.makedirs(dirname, exist_ok=True)
 
     # save masks
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        for ext in exts:
+    outlines = None
+    if png or save_jpeg or save_outlines or save_ncolor:
+        outlines = masks_to_outlines(mask)
+    
+    # save txt file
+    if save_txt:
+        name = basename + suffix + '.txt'
+        path = os.path.join(dirname, name)
+        with open(path, 'w') as f:
+            if primariesettings:
+                f.write(primariesettings + '\n')
+
+    # save outlines
+    if save_outlines:
+        name = basename + suffix + '_cp_outlines.png'
+        path = os.path.join(dirname, name)
+        imwrite(path, outlines)
+    
+    # Save masks as png
+    if png:
+        name = basename + suffix + '_cp_masks.png'
+        path = os.path.join(dirname, name)
+        imwrite(path, mask)
+    
+    # Save as jpeg
+    if save_jpeg:
+        name = basename + suffix + '_cp_masks.jpg'
+        path = os.path.join(dirname, name)
+        imwrite(path, mask)
+    
+    # save masks as tif
+    if tif:
+        name = basename + suffix + '_cp_masks.tif'
+        path = os.path.join(dirname, name)
+        imwrite(path, mask.astype(np.uint16))
+
+    if save_tif8bit:
+        name = basename + suffix + '_cp_masks_8bit.tif'
+        path = os.path.join(dirname, name)
+        imwrite(path, mask.astype(np.uint8))
+    
+    # save ncolor masks
+    if save_ncolor and OMNI_INSTALLED:
+        ncol = plot.apply_ncolor(mask)
+        name = basename + suffix + '_cp_ncolor_masks.png'
+        path = os.path.join(dirname, name)
+        imwrite(path, (ncol * 255).astype(np.uint8))
+
+    # save RGB flow
+    if save_flows and flow is not None and flow.shape[0]>0:
+        name = basename + suffix + '_cp_flows.tif'
+        imwrite(os.path.join(dirname, name), flow.astype(np.float32))
+    
+    return
+
+def save_masks(images, masks, flows, file_names, png=True, tif=False,
+               suffix='', dir_above=None, save_flows=False, save_outlines=False, 
+               save_ncolor=False, save_txt=True, in_folders=False, savedir=None, 
+               save_jpeg=False, save_tif8bit=True, save_fol=True, channels=[0,0], 
+               verbose=False, primariesettings=''):
+    """Save masks to disk
+    
+    Parameters
+    --------------
+    
+    images: list or array of ND-arrays
+        images input into cellpose/omnipose
+        
+    masks: list or array of ND-arrays 
+        masks output from cellpose/omnipose
+        
+    flows: list or array of ND-arrays 
+        flows output from cellpose
+    
+    file_names: list or array of strings
+        file names of images
+    
+    PNG options
+    -------------------
+    
+    png: bool
+        whether to save masks as PNG
+        
+    save_outlines: bool
+        whether to save outlines of masks as PNG
+        
+    save_ncolor: bool
+        whether to save masks as unique-colored PNG
+
+    TIFF options
+    -------------------
+
+    tif: bool 
+        whether to save masks as 16-bit TIFF
+
+    save_tif8bit: bool
+        whether to save masks as 8-bit TIFF
+
+    save_flows: bool
+        whether to save flows as TIFF
+        
+    save_jpeg: bool
+        whether to save masks as JPEG
+        
+    file naming options
+    ------------------
+    suffix: str
+        suffix for saved masks
+        
+    dir_above: str
+        directory to save masks, defaults to image directory
+        
+    in_folders: bool
+        whether to save masks in separate folders
+        
+    save_txt: bool 
+        whether to save _seg.npy file as well
+        
+    savedir: str
+        absolute path where images will be saved. Default is None
+    """
+    
+    # Handle the case where masks is a single array
+    if isinstance(masks, np.ndarray) and not isinstance(masks, list):
+        if len(masks.shape) > 3:
+            # If masks has more than 3 dimensions (likely a batch)
+            io_logger.info(f"Converting single {masks.ndim}D array of masks to list")
+        masks = list(masks)
+    
+    # Handle length mismatches
+    if len(masks) != len(images):
+        io_logger.warning(f"Length mismatch: {len(masks)} masks vs {len(images)} images")
+        n_items = min(len(masks), len(images))
+        masks = masks[:n_items]
+        images = images[:n_items]
+        file_names = file_names[:n_items]
+    
+    # Normalize flows to have same length as masks
+    if flows is not None:
+        if isinstance(flows, list) and len(flows) != len(masks):
+            if len(flows) == 1:
+                flows = flows * len(masks)
+            else:
+                flows = flows[:len(masks)]
+    else:
+        flows = [None] * len(masks)
+    
+    # Process each mask individually with non-recursive helper function
+    for i, (image, mask, flow, file_name) in enumerate(zip(images, masks, flows, file_names)):
+        try:
+            _save_single_mask(
+                image, mask, flow, file_name,
+                png=png, tif=tif, suffix=suffix, dir_above=dir_above,
+                save_flows=save_flows, save_outlines=save_outlines,
+                save_ncolor=save_ncolor, save_txt=save_txt,
+                in_folders=in_folders, savedir=savedir,
+                save_jpeg=save_jpeg, save_tif8bit=save_tif8bit,
+                save_fol=save_fol, channels=channels,
+                verbose=verbose, primariesettings=primariesettings
+            )
+        except Exception as e:
+            io_logger.error(f"Error saving mask {i} ({file_name}): {e}")
+            continue
             
-            imwrite(os.path.join(maskdir,basename + '_cp_masks' + suffix + ext), masks)
-    
-    criterion3 = not (min(images.shape) > 3 and images.ndim >=3)
-    
-    if png and MATPLOTLIB and criterion3 and save_plot:
-        img = images.copy()
-        # if img.ndim<3:
-        #     img = img[:,:,np.newaxis]
-        # elif img.shape[0]<8:
-        #     np.transpose(img, (1,2,0))
-        
-        fig = plt.figure(figsize=(12,3))
-        plot.show_segmentation(fig, img, masks, flows[0], omni=omni, channel_axis=channel_axis)
-        check_dir(cpdir) 
-        fig.savefig(os.path.join(cpdir,basename + '_cp_output' + suffix + '.png'), dpi=300)
-        plt.close(fig)
+    # Clean up memory
+    try:
+        from omnipose.memory import force_cleanup
+        force_cleanup(verbose=False)
+    except ImportError:
+        io_logger.debug("omnipose.memory.force_cleanup not available")
 
-    # ImageJ txt outline files 
-    if masks.ndim < 3 and save_txt:
-        check_dir(txtdir)
-        outlines = utils.outlines_list(masks)
-        outlines_to_text(os.path.join(txtdir,basename), outlines)
-    
-    # RGB outline images
-    if masks.ndim < 3 and save_outlines: 
-        check_dir(outlinedir) 
-        # outlines = utils.masks_to_outlines(masks)
-        # outX, outY = np.nonzero(outlines)
-        # img0 = transforms.normalize99(images,omni=omni)
-        img0 = images.copy()        
-
-        # if img0.shape[0] < 4:
-        #     img0 = np.transpose(img0, (1,2,0))
-        # if img0.shape[-1] < 3 or img0.ndim < 3:
-        #     print(img0.shape,'sdfsfdssf')
-        #     img0 = plot.image_to_rgb(img0, channels=channels, omni=omni) #channels=channels, 
-        
-        # img0 = (transforms.normalize99(img0,omni=omni)*(2**8-1)).astype(np.uint8)
-        # imgout= img0.copy()
-        # imgout[outX, outY] = np.array([255,0,0]) #pure red 
-        imgout = plot.outline_view(img0,masks,color=outline_col, 
-                                   channel_axis=channel_axis, 
-                                   channels=channels)
-        imwrite(os.path.join(outlinedir, basename + '_outlines' + suffix + '.jpeg'),  imgout)
-    
-    # ncolor labels (ready for color map application)
-    if masks.ndim < 3 and OMNI_INSTALLED and save_ncolor:
-        check_dir(ncolordir)
-        #convert masks to minimal n-color reresentation 
-        imwrite(os.path.join(ncolordir, basename + '_cp_ncolor_masks' + suffix + '.png'),
-               ncolor.label(masks))
-    
-    # save RGB flow picture
-    if masks.ndim < 3 and save_flows:
-        check_dir(flowdir)
-        imwrite(os.path.join(flowdir, basename + '_flows' + suffix + '.tif'), flows[0].astype(np.uint8))
-        #save full flow data
-        imwrite(os.path.join(flowdir, basename + '_dP' + suffix + '.tif'), flows[1]) 
-    
 def save_server(parent=None, filename=None):
     """ Uploads a *_seg.npy file to the bucket.
     

@@ -39,7 +39,8 @@ install_deps = ['numpy',
                 'dbscan',
                 'networkit',
                 'torchvf',
-                'rich'
+                'rich',
+                'psutil'
                 ]
 
 # Define gui_deps directly, as imported by other modules
