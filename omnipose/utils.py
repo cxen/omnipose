@@ -1,7 +1,15 @@
 import numpy as np
+
+# Try to import dask, but handle the error if it fails due to NumPy 2.0+ incompatibility
+try:
+    from dask import array as da
+    DASK_AVAILABLE = True
+except (ImportError, AttributeError) as e:
+    print(f"Warning: Dask import failed: {e}")
+    print("Using NumPy fallbacks for dask functionality.")
+    DASK_AVAILABLE = False
+
 import torch
-import dask
-from dask import array as da 
 
 from scipy.ndimage import binary_dilation, binary_erosion, gaussian_filter
 from scipy.ndimage import convolve1d, convolve, affine_transform

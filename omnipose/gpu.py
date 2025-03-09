@@ -323,3 +323,32 @@ def use_gpu(gpu_number=None, istorch=True, use_torch=True):
     
     # No GPU available
     return False
+
+def create_cuda_tensor(data=None, size=None, dtype=torch.float32, fill_value=None):
+    """
+    Create a CUDA tensor using the recommended PyTorch approach.
+    
+    Args:
+        data: Data to initialize the tensor with
+        size: Size of tensor to create (if data is None)
+        dtype: Data type of the tensor (default: torch.float32)
+        fill_value: Value to fill the tensor with (if not None)
+        
+    Returns:
+        A tensor on the CUDA device
+    """
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    
+    if data is not None:
+        tensor = torch.tensor(data, dtype=dtype, device=device)
+    elif size is not None:
+        tensor = torch.zeros(size, dtype=dtype, device=device)
+        if fill_value is not None:
+            tensor.fill_(fill_value)
+    else:
+        # Default to scalar
+        tensor = torch.zeros(1, dtype=dtype, device=device)
+        if fill_value is not None:
+            tensor.fill_(fill_value)
+            
+    return tensor
